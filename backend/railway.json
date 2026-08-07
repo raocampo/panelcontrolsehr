@@ -2,7 +2,7 @@
   "$schema": "https://railway.com/railway.schema.json",
   "build": {
     "builder": "NIXPACKS",
-    "buildCommand": "npm install && npx prisma generate"
+    "buildCommand": "npm install && npx prisma generate && npx prisma migrate deploy && node scripts/crear-staff-inicial.js --nombre=\"$STAFF_NOMBRE\" --email=\"$STAFF_EMAIL\" --password=\"$STAFF_PASSWORD\""
   },
   "deploy": {
     "startCommand": "node server.js",
