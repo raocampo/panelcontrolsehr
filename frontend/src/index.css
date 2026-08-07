@@ -1,0 +1,108 @@
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  background: #f2f4f7;
+  color: #1a2233;
+}
+
+.pantalla-centrada {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tarjeta-solicitud { width: 420px; }
+/* Honeypot: fuera de pantalla pero presente en el DOM, para que los bots que
+   rellenan todos los inputs lo llenen y las personas nunca lo vean. */
+.campo-honeypot {
+  position: absolute;
+  left: -9999px;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+}
+
+.tarjeta-login {
+  background: #fff;
+  padding: 32px;
+  border-radius: 10px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+  width: 320px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.tarjeta-login h1 { margin: 0; font-size: 1.4rem; }
+.subtitulo { margin: 0 0 8px; color: #667; font-size: 0.85rem; }
+.tarjeta-login label { display: flex; flex-direction: column; gap: 4px; font-size: 0.85rem; font-weight: 600; }
+.tarjeta-login input, .form-grid input, .form-grid select, textarea {
+  padding: 8px 10px;
+  border: 1px solid #ccd3dd;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  font-weight: normal;
+}
+button {
+  background: #1a3a5c;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 9px 14px;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+button:disabled { opacity: 0.6; cursor: default; }
+.btn-secundario { background: #98a3b3; }
+.btn-link { background: none; color: #1a3a5c; padding: 2px 6px; text-decoration: underline; }
+.mensaje-error { background: #fdecea; color: #b3261e; padding: 8px 10px; border-radius: 6px; font-size: 0.85rem; }
+
+.app-shell { min-height: 100vh; }
+.app-header {
+  background: #1a3a5c;
+  color: #fff;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 20px;
+}
+.app-header .btn-link { color: #cfe0f0; }
+
+.tabs { display: flex; gap: 4px; background: #fff; padding: 0 16px; border-bottom: 1px solid #e0e4ea; }
+.tabs button { background: none; color: #556; border-radius: 0; padding: 12px 16px; }
+.tabs .tab-activo { color: #1a3a5c; border-bottom: 3px solid #1a3a5c; font-weight: 700; }
+
+.pad { padding: 20px; }
+.toolbar { margin-bottom: 12px; }
+
+table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; }
+th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid #eef0f3; font-size: 0.88rem; }
+th { background: #f7f8fa; font-weight: 700; color: #445; }
+.vacio { text-align: center; color: #99a; padding: 24px; }
+.acciones { display: flex; gap: 8px; }
+
+.badge { padding: 3px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: 700; }
+.badge-trial { background: #fff4de; color: #9a6700; }
+.badge-activo { background: #e3f7e6; color: #1a7a34; }
+.badge-bloqueado { background: #fdecea; color: #b3261e; }
+.badge-cancelado { background: #eceff2; color: #667; }
+.badge-nueva { background: #e6eefc; color: #1c56b0; }
+.badge-contactada { background: #fff4de; color: #9a6700; }
+.badge-convertida { background: #e3f7e6; color: #1a7a34; }
+.badge-descartada { background: #eceff2; color: #667; }
+.texto-alerta { color: #b3261e; font-weight: 700; }
+
+.modal-overlay {
+  position: fixed; inset: 0; background: rgba(20,25,35,0.5);
+  display: flex; align-items: center; justify-content: center; z-index: 100;
+  padding: 20px;
+}
+.modal-caja {
+  background: #fff; border-radius: 10px; padding: 24px;
+  width: 100%; max-width: 640px; max-height: 90vh; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 12px;
+}
+.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.form-grid label, .campo-ancho { display: flex; flex-direction: column; gap: 4px; font-size: 0.85rem; font-weight: 600; }
+.modal-acciones { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }

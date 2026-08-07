@@ -1,0 +1,68 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Usuarios del panel (equipo comercial/soporte de CorpSimtelec) — no confundir
+// con usuarios de un cliente (esos viven en la BD aislada de cada despliegue).
+model staff_usuarios {
+  id          Int       @id @default(autoincrement())
+  nombre      String    @db.VarChar(150)
+  email       String    @unique @db.VarChar(150)
+  password    String
+  rol         String    @default("super_admin") @db.VarChar(30)
+  activo      Boolean   @default(true)
+  ultimoLogin DateTime?
+  createdAt   DateTime  @default(now())
+}
+
+// Un registro por cliente/despliegue de SUJAM (o de otro sistema hermano a
+// futuro). No contiene datos clínicos — solo lo necesario para llevar el
+// estado comercial (trial/activo/bloqueado) y ubicar el despliegue real.
+model clientes {
+  id                    Int           @id @default(autoincrement())
+  nombreComercial       String        @db.VarChar(150)
+  razonSocial           String?       @db.VarChar(200)
+  contactoNombre        String?       @db.VarChar(150)
+  contactoEmail         String?       @db.VarChar(150)
+  contactoTelefono      String?       @db.VarChar(50)
+  tipoDespliegue        String        @db.VarChar(30) // marca_blanca | tenant_corpsimtelec
+  dominioFrontend       String?       @db.VarChar(200)
+  dominioBackend        String?       @db.VarChar(200)
+  railwayProjectId      String?       @db.VarChar(100)
+  vercelProjectId       String?       @db.VarChar(100)
+  secretoControlPlane   String?       @db.VarChar(100) // secreto para PUT /api/admin/licencia de este cliente
+  estado                String        @default("trial") @db.VarChar(30) // trial | activo | bloqueado | cancelado
+  trialInicioAt         DateTime?
+  trialExpiraAt         DateTime?
+  trialSoloLecturaHasta DateTime?
+  fechaActivacion       DateTime?
+  notas                 String?
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
+  solicitudes           solicitudes[]
+
+  @@index([estado])
+}
+
+// Listas para que la Fase 3 (formulario público) las alimente más adelante.
+// Mientras tanto el staff las crea a mano al captar un prospecto.
+model solicitudes {
+  id                Int       @id @default(autoincrement())
+  nombreSolicitante String    @db.VarChar(150)
+  empresa           String?   @db.VarChar(150)
+  email             String    @db.VarChar(150)
+  telefono          String?   @db.VarChar(50)
+  tipoCliente       String?   @db.VarChar(30)
+  mensaje           String?
+  estado            String    @default("nueva") @db.VarChar(30) // nueva | contactada | convertida | descartada
+  clienteId         Int?
+  cliente           clientes? @relation(fields: [clienteId], references: [id])
+  createdAt         DateTime  @default(now())
+
+  @@index([estado])
+}
