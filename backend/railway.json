@@ -6,9 +6,7 @@
   },
   "deploy": {
     "startCommand": "node server.js",
-    "preDeployCommand": [
-      "npx prisma migrate deploy && node -e \"require('dotenv').config();const bcrypt=require('bcryptjs');const{PrismaClient}=require('@prisma/client');const p=new PrismaClient();(async()=>{const h=await bcrypt.hash(process.env.STAFF_PASSWORD,10);await p.staff_usuarios.update({where:{email:process.env.STAFF_EMAIL},data:{password:h}});console.log('reset ok');process.exit(0);})();\""
-    ],
+    "preDeployCommand": ["npx prisma migrate deploy"],
     "healthcheckPath": "/api/health",
     "healthcheckTimeout": 100,
     "restartPolicyType": "ON_FAILURE",
