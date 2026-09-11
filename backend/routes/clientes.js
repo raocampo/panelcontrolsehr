@@ -3,9 +3,63 @@ const crypto = require('crypto');
 const router = express.Router();
 const prisma = require('../config/prisma');
 const { proteger } = require('../middleware/auth');
-const { notificarLicencia } = require('../utils/licenciaBridge');
+const { notificarEstado } = require('../utils/estadoCliente');
+const sujamTenants = require('../utils/sujamTenants');
 
 router.use(proteger);
+
+const TIPOS_EMPRESA = ['medico', 'consorcio', 'hospital_clinica'];
+
+function slugify(v) {
+    const s = String(v || '')
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[̀-ͯ]/g, '') // quita tildes (marcas combinantes tras NFD)
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/(^-|-$)/g, '')
+        .slice(0, 40);
+    return s || `cli-${Date.now().toString(36)}`;
+}
+
+async function slugUnico(base) {
+    let slug = base;
+    for (let i = 2; i <= 20; i++) {
+        const existe = await prisma.clientes.findUnique({ where: { slug } });
+        if (!existe) return slug;
+        slug = `${base}-${i}`.slice(0, 43);
+    }
+    return `${base}-${Date.now().toString(36)}`;
+}
+
+// Aprovisiona (o reintenta) el tenant de un cliente tenant_corpsimtelec en SUJAM.
+async function aprovisionarTenant(cliente) {
+    const modo = cliente.estado === 'activo' ? 'activo' : 'trial';
+    const trialDias = cliente.trialExpiraAt && cliente.trialInicioAt
+        ? Math.max(1, Math.round((new Date(cliente.trialExpiraAt) - new Date(cliente.trialInicioAt)) / 864e5))
+        : 30;
+
+    const r = await sujamTenants.crearTenant({
+        slug: cliente.slug,
+        organizacion: cliente.nombreComercial,
+        razonSocial: cliente.razonSocial || undefined,
+        ruc: cliente.ruc || undefined,
+        tipo: cliente.tipoEmpresa || 'consorcio',
+        adminEmail: cliente.contactoEmail || `admin@${cliente.slug}.local`,
+        adminNombre: cliente.contactoNombre || 'Administrador',
+        modo,
+        trialDias,
+        branding: { nombre: cliente.nombreComercial },
+    });
+
+    return prisma.clientes.update({
+        where: { id: cliente.id },
+        data: {
+            aprovisionamiento: r.ok ? 'aprovisionando' : 'error',
+            dominioFrontend: r.ok ? sujamTenants.dominioFrontend(cliente.slug) : cliente.dominioFrontend,
+            notas: r.ok ? cliente.notas : `${cliente.notas ? cliente.notas + '\n' : ''}[aprovisionamiento] ${r.error}`,
+        },
+    });
+}
 
 // GET /api/clientes
 router.get('/', async (req, res) => {
@@ -42,19 +96,33 @@ router.post('/', async (req, res) => {
     try {
         const {
             nombreComercial, razonSocial, contactoNombre, contactoEmail, contactoTelefono,
-            tipoDespliegue, dominioFrontend, dominioBackend, railwayProjectId, vercelProjectId,
+            tipoDespliegue, tipoEmpresa, ruc, slug: slugIn,
+            dominioFrontend, dominioBackend, railwayProjectId, vercelProjectId,
             estado, trialInicioAt, trialExpiraAt, trialSoloLecturaHasta, notas,
         } = req.body;
 
         if (!nombreComercial || !tipoDespliegue) {
             return res.status(400).json({ success: false, mensaje: 'nombreComercial y tipoDespliegue son requeridos' });
         }
+        if (tipoEmpresa && !TIPOS_EMPRESA.includes(tipoEmpresa)) {
+            return res.status(400).json({ success: false, mensaje: `tipoEmpresa inválido (${TIPOS_EMPRESA.join(', ')})` });
+        }
 
-        const cliente = await prisma.clientes.create({
+        let slug = null;
+        if (tipoDespliegue === 'tenant_corpsimtelec') {
+            slug = await slugUnico(slugify(slugIn || nombreComercial));
+        }
+
+        let cliente = await prisma.clientes.create({
             data: {
                 nombreComercial, razonSocial, contactoNombre, contactoEmail, contactoTelefono,
-                tipoDespliegue, dominioFrontend, dominioBackend, railwayProjectId, vercelProjectId,
+                tipoDespliegue,
+                tipoEmpresa: tipoEmpresa || 'consorcio',
+                ruc: ruc || null,
+                slug,
+                dominioFrontend, dominioBackend, railwayProjectId, vercelProjectId,
                 estado: estado || 'trial',
+                aprovisionamiento: tipoDespliegue === 'tenant_corpsimtelec' ? 'pendiente' : 'listo',
                 trialInicioAt: trialInicioAt ? new Date(trialInicioAt) : null,
                 trialExpiraAt: trialExpiraAt ? new Date(trialExpiraAt) : null,
                 trialSoloLecturaHasta: trialSoloLecturaHasta ? new Date(trialSoloLecturaHasta) : null,
@@ -62,49 +130,91 @@ router.post('/', async (req, res) => {
                 secretoControlPlane: crypto.randomBytes(32).toString('hex'),
             },
         });
-        res.status(201).json({ success: true, data: cliente });
+
+        let avisoAprov;
+        if (tipoDespliegue === 'tenant_corpsimtelec') {
+            if (sujamTenants.configurado()) {
+                cliente = await aprovisionarTenant(cliente);
+                if (cliente.aprovisionamiento === 'error') avisoAprov = 'El cliente se creó pero falló el aprovisionamiento del tenant en SUJAM (ver notas). Reintentar con POST /:id/aprovisionar.';
+            } else {
+                avisoAprov = 'SUJAM_SUPERADMIN_URL/SECRET no configurados: el tenant no se aprovisionó automáticamente.';
+            }
+        }
+
+        res.status(201).json({ success: true, data: cliente, avisoAprov });
     } catch (error) {
         console.error('POST /clientes:', error);
+        if (error.code === 'P2002') return res.status(409).json({ success: false, mensaje: 'Ya existe un cliente con ese slug' });
         res.status(500).json({ success: false, mensaje: 'Error al crear cliente' });
+    }
+});
+
+// POST /api/clientes/:id/aprovisionar — reintento del aprovisionamiento del tenant
+router.post('/:id/aprovisionar', async (req, res) => {
+    try {
+        const cliente = await prisma.clientes.findUnique({ where: { id: parseInt(req.params.id, 10) } });
+        if (!cliente) return res.status(404).json({ success: false, mensaje: 'Cliente no encontrado' });
+        if (cliente.tipoDespliegue !== 'tenant_corpsimtelec') {
+            return res.status(400).json({ success: false, mensaje: 'Solo aplica a clientes tenant_corpsimtelec' });
+        }
+        if (!cliente.slug) {
+            await prisma.clientes.update({ where: { id: cliente.id }, data: { slug: await slugUnico(slugify(cliente.nombreComercial)) } });
+        }
+        const fresco = await prisma.clientes.findUnique({ where: { id: cliente.id } });
+        const actualizado = await aprovisionarTenant(fresco);
+        res.json({ success: true, data: actualizado });
+    } catch (error) {
+        console.error('POST /clientes/:id/aprovisionar:', error);
+        res.status(500).json({ success: false, mensaje: 'Error al aprovisionar' });
+    }
+});
+
+// GET /api/clientes/:id/aprovisionamiento — consulta el estado real del tenant en SUJAM
+router.get('/:id/aprovisionamiento', async (req, res) => {
+    try {
+        const cliente = await prisma.clientes.findUnique({ where: { id: parseInt(req.params.id, 10) } });
+        if (!cliente) return res.status(404).json({ success: false, mensaje: 'Cliente no encontrado' });
+        if (cliente.tipoDespliegue !== 'tenant_corpsimtelec' || !cliente.slug) {
+            return res.json({ success: true, data: { aprovisionamiento: cliente.aprovisionamiento, remoto: null } });
+        }
+        const r = await sujamTenants.obtenerTenant(cliente.slug);
+        let aprov = cliente.aprovisionamiento;
+        if (r.ok && (r.data.estado === 'activo' || r.data.estado === 'solo_lectura')) aprov = 'listo';
+        else if (r.ok && r.data.estado === 'error') aprov = 'error';
+        if (aprov !== cliente.aprovisionamiento) {
+            await prisma.clientes.update({ where: { id: cliente.id }, data: { aprovisionamiento: aprov } });
+        }
+        res.json({ success: true, data: { aprovisionamiento: aprov, remoto: r.ok ? r.data : { error: r.error } } });
+    } catch (error) {
+        console.error('GET /clientes/:id/aprovisionamiento:', error);
+        res.status(500).json({ success: false, mensaje: 'Error al consultar aprovisionamiento' });
     }
 });
 
 // PUT /api/clientes/:id
 router.put('/:id', async (req, res) => {
     try {
-        const {
-            nombreComercial, razonSocial, contactoNombre, contactoEmail, contactoTelefono,
-            tipoDespliegue, dominioFrontend, dominioBackend, railwayProjectId, vercelProjectId,
-            estado, trialInicioAt, trialExpiraAt, trialSoloLecturaHasta, notas,
-        } = req.body;
-
+        const b = req.body;
         const dataToUpdate = {};
-        if (nombreComercial !== undefined) dataToUpdate.nombreComercial = nombreComercial;
-        if (razonSocial !== undefined) dataToUpdate.razonSocial = razonSocial;
-        if (contactoNombre !== undefined) dataToUpdate.contactoNombre = contactoNombre;
-        if (contactoEmail !== undefined) dataToUpdate.contactoEmail = contactoEmail;
-        if (contactoTelefono !== undefined) dataToUpdate.contactoTelefono = contactoTelefono;
-        if (tipoDespliegue !== undefined) dataToUpdate.tipoDespliegue = tipoDespliegue;
-        if (dominioFrontend !== undefined) dataToUpdate.dominioFrontend = dominioFrontend;
-        if (dominioBackend !== undefined) dataToUpdate.dominioBackend = dominioBackend;
-        if (railwayProjectId !== undefined) dataToUpdate.railwayProjectId = railwayProjectId;
-        if (vercelProjectId !== undefined) dataToUpdate.vercelProjectId = vercelProjectId;
-        if (estado !== undefined) dataToUpdate.estado = estado;
-        if (trialInicioAt !== undefined) dataToUpdate.trialInicioAt = trialInicioAt ? new Date(trialInicioAt) : null;
-        if (trialExpiraAt !== undefined) dataToUpdate.trialExpiraAt = trialExpiraAt ? new Date(trialExpiraAt) : null;
-        if (trialSoloLecturaHasta !== undefined) dataToUpdate.trialSoloLecturaHasta = trialSoloLecturaHasta ? new Date(trialSoloLecturaHasta) : null;
-        if (notas !== undefined) dataToUpdate.notas = notas;
+        for (const k of ['nombreComercial', 'razonSocial', 'contactoNombre', 'contactoEmail', 'contactoTelefono',
+            'tipoDespliegue', 'tipoEmpresa', 'ruc', 'dominioFrontend', 'dominioBackend',
+            'railwayProjectId', 'vercelProjectId', 'estado', 'notas']) {
+            if (b[k] !== undefined) dataToUpdate[k] = b[k];
+        }
+        for (const k of ['trialInicioAt', 'trialExpiraAt', 'trialSoloLecturaHasta']) {
+            if (b[k] !== undefined) dataToUpdate[k] = b[k] ? new Date(b[k]) : null;
+        }
 
         const cliente = await prisma.clientes.update({
             where: { id: parseInt(req.params.id, 10) },
             data: dataToUpdate,
         });
 
-        const bridge = await notificarLicencia(cliente);
+        const bridge = await notificarEstado(cliente);
         res.json({
             success: true,
             data: cliente,
-            avisoBridge: bridge.ok ? undefined : `Cliente actualizado, pero no se pudo notificar a su sistema real: ${bridge.error}`,
+            avisoBridge: bridge.ok ? undefined : `Cliente actualizado, pero no se pudo notificar a su despliegue: ${bridge.error}`,
         });
     } catch (error) {
         console.error('PUT /clientes/:id:', error);
@@ -113,8 +223,7 @@ router.put('/:id', async (req, res) => {
     }
 });
 
-// PUT /api/clientes/:id/dar-de-alta — único gate humano real (Ronda 6): el
-// cliente pagó, pasa de trial a activo.
+// PUT /api/clientes/:id/dar-de-alta — el cliente pagó: trial -> activo
 router.put('/:id/dar-de-alta', async (req, res) => {
     try {
         const cliente = await prisma.clientes.update({
@@ -122,11 +231,11 @@ router.put('/:id/dar-de-alta', async (req, res) => {
             data: { estado: 'activo', fechaActivacion: new Date() },
         });
 
-        const bridge = await notificarLicencia(cliente);
+        const bridge = await notificarEstado(cliente);
         res.json({
             success: true,
             data: cliente,
-            avisoBridge: bridge.ok ? undefined : `Cliente actualizado, pero no se pudo notificar a su sistema real: ${bridge.error}`,
+            avisoBridge: bridge.ok ? undefined : `Cliente actualizado, pero no se pudo notificar a su despliegue: ${bridge.error}`,
         });
     } catch (error) {
         console.error('PUT /clientes/:id/dar-de-alta:', error);

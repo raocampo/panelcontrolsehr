@@ -31,11 +31,15 @@ model clientes {
   contactoEmail         String?       @db.VarChar(150)
   contactoTelefono      String?       @db.VarChar(50)
   tipoDespliegue        String        @db.VarChar(30) // marca_blanca | tenant_corpsimtelec
+  tipoEmpresa           String        @default("consorcio") @db.VarChar(30) // medico | consorcio | hospital_clinica
+  slug                  String?       @unique @db.VarChar(63) // solo tenant_corpsimtelec: {slug}.sujam.corpsimtelec.com
+  ruc                   String?       @db.VarChar(13)
+  aprovisionamiento     String        @default("pendiente") @db.VarChar(20) // pendiente | aprovisionando | listo | error
   dominioFrontend       String?       @db.VarChar(200)
   dominioBackend        String?       @db.VarChar(200)
   railwayProjectId      String?       @db.VarChar(100)
   vercelProjectId       String?       @db.VarChar(100)
-  secretoControlPlane   String?       @db.VarChar(100) // secreto para PUT /api/admin/licencia de este cliente
+  secretoControlPlane   String?       @db.VarChar(100) // marca_blanca: secreto para PUT /api/admin/licencia de esa instancia
   estado                String        @default("trial") @db.VarChar(30) // trial | activo | bloqueado | cancelado
   trialInicioAt         DateTime?
   trialExpiraAt         DateTime?

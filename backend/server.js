@@ -16,7 +16,10 @@ app.use('/api/auth', require('./routes/auth'));
 app.use('/api/clientes', require('./routes/clientes'));
 app.use('/api/solicitudes', require('./routes/solicitudes'));
 
+const { iniciarReaper } = require('./jobs/reaper');
+
 app.listen(PORT, () => {
+    iniciarReaper();
     console.log('==================================================');
     console.log('🛠️  PANEL DE CONTROL SUJAM - BACKEND');
     console.log('==================================================');

@@ -32,19 +32,34 @@ dominio propio.
 deploy (patrón permanente, corre en runtime — **no** en el build, Railway no inyecta
 variables de otros servicios durante el build).
 
-## Alcance actual (Fase 2 — mínimo)
+## Alcance actual
 
 - CRUD de `clientes` con estado (`trial` / `activo` / `bloqueado` /
   `cancelado`) y fechas de trial (informativas — el bloqueo real ocurre
-  dentro del backend de cada cliente, no aquí).
+  dentro del backend/tenant de cada cliente, no aquí).
 - Acción "Dar de alta" — único paso manual: cuando el cliente paga, pasa a
   `activo`.
-- Tabla `solicitudes`, lista para que la Fase 3 (formulario público) la
-  alimente más adelante — hoy el staff la puede usar manualmente.
+- Tabla `solicitudes`, lista para que un formulario público la alimente.
+- **Aprovisionamiento automático de tenants** (2026-09-10, arquitectura
+  multi-tenant de SUJAM — ver `sistemaSUJAM/docs/Documentación/05-propuestas-tecnicas/
+  ARQUITECTURA_MULTITENANT_MARCA_BLANCA.md`, FASE 6): al crear un cliente
+  `tipoDespliegue = tenant_corpsimtelec`, el panel genera un `slug` y llama a
+  `POST /api/superadmin/tenants` en el backend multi-tenant de SUJAM, que crea
+  la BD del tenant, aplica el schema y lo siembra según `tipoEmpresa`
+  (medico/consorcio/hospital_clinica → plan V1/V2/V3). El campo
+  `aprovisionamiento` (`pendiente|aprovisionando|listo|error`) se sincroniza
+  vía `GET /:id/aprovisionamiento` (también corrido por el reaper cada hora).
+  `POST /:id/aprovisionar` reintenta si falló. Cambios de `estado` (bloquear/
+  activar) se propagan con `PATCH /api/superadmin/tenants/:slug/estado`.
+  Probado extremo a extremo en local: alta → aprovisionamiento real (BD +
+  seed) → bloqueo → reactivación → bloqueo enforced (403) en el tenant.
+- `tipoDespliegue = marca_blanca` sigue con el puente 1:1 existente
+  (`PUT /api/admin/licencia` en la instancia dedicada del cliente,
+  `utils/licenciaBridge.js`) — sin cambios en esta fase.
 
-**Fuera de alcance a propósito** (decidido en la Ronda 6 de SUJAM):
-formulario público de solicitud (Fase 3) y aprovisionamiento automático de
-Railway/Vercel (Fase 4) — quedan para una sesión dedicada aparte.
+**Pendiente (Fase 4 del plan de marca blanca):** aprovisionamiento automático
+de infraestructura Railway/Vercel para clientes `marca_blanca` (hoy sigue
+manual) — sesión dedicada aparte.
 
 ## Stack
 
@@ -70,6 +85,12 @@ npm run dev   # http://localhost:5621
 No hay registro público — el primer usuario del panel se crea con el
 script `crear-staff-inicial.js`.
 
+Para que el alta de clientes `tenant_corpsimtelec` aprovisione de verdad,
+configurar en `.env` (ver `.env.example`): `SUJAM_SUPERADMIN_URL`,
+`SUJAM_SUPERADMIN_SECRET` (= `CONTROL_PLANE_SECRET` del backend multi-tenant
+de SUJAM) y `SUJAM_TENANT_BASE_DOMAIN`. Sin esas variables, `POST /api/clientes`
+sigue creando el registro pero devuelve `avisoAprov` en vez de aprovisionar.
+
 ## Pendiente
 
 - Conectar dominio propio (`panel.corpsimtelec.com` o similar) en Railway y Vercel.
@@ -78,5 +99,10 @@ script `crear-staff-inicial.js`.
   (o al dominio propio una vez exista).
 - Revisar el advisory de seguridad de `react-router-dom` antes de difundir
   `/solicitar-acceso` más ampliamente (ver `sistemaSUJAM/docs/qa/cierre_jornada_2026-08-06.md`).
-- Fase 4 (aprovisionamiento automático Railway/Vercel) — sesión dedicada aparte.
+- Configurar `SUJAM_SUPERADMIN_URL`/`SUJAM_SUPERADMIN_SECRET` en el Railway de
+  este panel apuntando al backend multi-tenant real de SUJAM (hoy solo probado
+  en local).
+- Frontend del panel: UI para elegir `tipoEmpresa` al crear un cliente, mostrar
+  `aprovisionamiento` y el dominio del tenant, botón "Reintentar aprovisionar".
+- Fase 4 (aprovisionamiento automático Railway/Vercel para `marca_blanca`) — sesión dedicada aparte.
 - Cargar los clientes reales existentes de SUJAM en la tabla `clientes` de este panel.
