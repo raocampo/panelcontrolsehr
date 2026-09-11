@@ -69,6 +69,17 @@ async function obtenerEnvironmentProduccion(projectId) {
     return prod.node.id;
 }
 
+/** Busca el id de un servicio del proyecto por nombre (ej. "backend"). */
+async function buscarServicioPorNombre(projectId, nombre) {
+    const data = await gql(
+        `query($id: String!) { project(id: $id) { services { edges { node { id name } } } } }`,
+        { id: projectId },
+    );
+    const match = data.project.services.edges.find((e) => e.node.name === nombre);
+    if (!match) throw new Error(`No se encontró el servicio "${nombre}" en el proyecto ${projectId}`);
+    return match.node.id;
+}
+
 async function crearServicioImagen({ projectId, nombre, imagen }) {
     const data = await gql(
         `mutation($input: ServiceCreateInput!) { serviceCreate(input: $input) { id } }`,
@@ -77,10 +88,16 @@ async function crearServicioImagen({ projectId, nombre, imagen }) {
     return data.serviceCreate.id;
 }
 
-async function crearServicioRepo({ projectId, nombre, repo, rootDirectory, preDeployCommand }) {
+async function crearServicioRepo({ projectId, nombre, repo, rootDirectory, preDeployCommand, branch }) {
+    const input = { projectId, name: nombre, source: { repo } };
+    // Fija la rama/tag que este servicio sigue. Si no se pasa, Railway usa la
+    // rama default del repo (main) — para clientes marca_blanca conviene
+    // fijar un release concreto (ver "actualizar versión de un cliente" más
+    // abajo) en vez de seguir main en vivo.
+    if (branch) input.branch = branch;
     const data = await gql(
         `mutation($input: ServiceCreateInput!) { serviceCreate(input: $input) { id } }`,
-        { input: { projectId, name: nombre, source: { repo } } },
+        { input },
     );
     const serviceId = data.serviceCreate.id;
     const instanceInput = {};
@@ -125,51 +142,49 @@ async function crearDominio({ serviceId, environmentId, targetPort }) {
     return data.serviceDomainCreate.domain;
 }
 
-async function redeploy({ serviceId, environmentId }) {
-    await gql(
-        `mutation($serviceId: String!, $environmentId: String!) { serviceInstanceDeploy(serviceId: $serviceId, environmentId: $environmentId) }`,
-        { serviceId, environmentId },
-    );
-}
-
-async function ultimoDeployment({ projectId, serviceId }) {
-    const data = await gql(
-        `query($input: DeploymentListInput!) { deployments(input: $input, first: 1) { edges { node { id status createdAt } } } }`,
-        { input: { projectId, serviceId } },
-    );
-    return data.deployments.edges[0]?.node || null;
-}
-
 /**
- * Espera hasta que el ÚLTIMO deployment del servicio quede SUCCESS (o falle/timeout).
- *
- * Cambiar variables/config puede disparar más de un deploy casi simultáneo
- * (uno por cada mutación que lo provoca) — si dos corren su preDeployCommand
- * en paralelo contra la misma BD nueva, el segundo falla con "ya existe" aunque
- * el primero haya salido bien. Por eso no basta con mirar el más reciente una
- * sola vez: se exige que sea el mismo ID de forma estable por `settleMs` antes
- * de resolverlo, así un segundo trigger que llegue tarde no nos hace fallar
- * sobre un resultado que ya estaba resuelto.
+ * Dispara un deploy de una revisión EXACTA (rama, tag o SHA — Railway
+ * resuelve el ref del lado del build) y devuelve el id del deployment
+ * creado. A diferencia de `serviceInstanceDeploy` (booleano, "redeploy lo
+ * que ya esté configurado"), esto es lo que permite:
+ *   a) fijar/actualizar la versión de un cliente concreto sin tocar a los
+ *      demás (pasar el tag/rama de ese cliente), y
+ *   b) esperar el resultado del deployment exacto que se disparó, sin la
+ *      ambigüedad de "cuál es el último" cuando hay más de un trigger casi
+ *      simultáneo (variables + este llamado, por ejemplo).
+ * Confirmado en vivo: commitSha acepta un nombre de rama (ej. "main") y
+ * Railway lo resuelve al commit real (verificado con `deployment(id).meta`).
  */
-async function esperarDeploySuccess({ projectId, serviceId }, { timeoutMs = 5 * 60 * 1000, intervaloMs = 4000, settleMs = 10000 } = {}) {
+async function desplegarVersion({ serviceId, environmentId, ref }) {
+    const data = await gql(
+        `mutation($serviceId: String!, $environmentId: String!, $commitSha: String) {
+            serviceInstanceDeployV2(serviceId: $serviceId, environmentId: $environmentId, commitSha: $commitSha)
+        }`,
+        { serviceId, environmentId, commitSha: ref || undefined },
+    );
+    return data.serviceInstanceDeployV2; // deployment id
+}
+
+async function obtenerDeployment(deploymentId) {
+    const data = await gql(
+        `query($id: String!) { deployment(id: $id) { id status meta } }`,
+        { id: deploymentId },
+    );
+    return data.deployment;
+}
+
+/** Espera a que un deployment CONCRETO (por id) termine en SUCCESS, o falle/timeout. */
+async function esperarDeployment(deploymentId, { timeoutMs = 5 * 60 * 1000, intervaloMs = 4000 } = {}) {
     const limite = Date.now() + timeoutMs;
-    let ultimoIdVisto = null;
-    let ultimoIdDesde = 0;
     while (Date.now() < limite) {
-        const d = await ultimoDeployment({ projectId, serviceId });
-        if (d) {
-            if (d.id !== ultimoIdVisto) { ultimoIdVisto = d.id; ultimoIdDesde = Date.now(); }
-            const estable = Date.now() - ultimoIdDesde >= settleMs;
-            if (estable) {
-                if (d.status === 'SUCCESS') return d;
-                if (['FAILED', 'CRASHED', 'REMOVED'].includes(d.status)) {
-                    throw new Error(`Deployment terminó en estado ${d.status} (id ${d.id})`);
-                }
-            }
+        const d = await obtenerDeployment(deploymentId);
+        if (d.status === 'SUCCESS') return d;
+        if (['FAILED', 'CRASHED', 'REMOVED'].includes(d.status)) {
+            throw new Error(`Deployment ${deploymentId} terminó en estado ${d.status}`);
         }
         await new Promise((r) => setTimeout(r, intervaloMs));
     }
-    throw new Error('Timeout esperando el deploy de Railway');
+    throw new Error(`Timeout esperando el deployment ${deploymentId}`);
 }
 
 module.exports = {
@@ -178,12 +193,13 @@ module.exports = {
     cuentaInfo,
     crearProyecto,
     obtenerEnvironmentProduccion,
+    buscarServicioPorNombre,
     crearServicioImagen,
     crearServicioRepo,
     crearVolumen,
     setVariables,
     crearDominio,
-    redeploy,
-    ultimoDeployment,
-    esperarDeploySuccess,
+    desplegarVersion,
+    obtenerDeployment,
+    esperarDeployment,
 };

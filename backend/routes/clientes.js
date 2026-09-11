@@ -5,7 +5,7 @@ const prisma = require('../config/prisma');
 const { proteger } = require('../middleware/auth');
 const { notificarEstado } = require('../utils/estadoCliente');
 const sujamTenants = require('../utils/sujamTenants');
-const { provisionarMarcaBlanca } = require('../utils/provisionMarcaBlanca');
+const { provisionarMarcaBlanca, actualizarVersionMarcaBlanca } = require('../utils/provisionMarcaBlanca');
 
 router.use(proteger);
 
@@ -201,6 +201,51 @@ router.post('/:id/aprovisionar', async (req, res) => {
     } catch (error) {
         console.error('POST /clientes/:id/aprovisionar:', error);
         res.status(500).json({ success: false, mensaje: 'Error al aprovisionar' });
+    }
+});
+
+// POST /api/clientes/:id/actualizar-version — sube UN cliente marca_blanca a
+// una rama/tag/commit concreto, sin tocar a ningún otro cliente. Así dos
+// clientes pueden quedar en versiones distintas a propósito (uno con una
+// función que pidió, otro sin ella).
+router.post('/:id/actualizar-version', async (req, res) => {
+    try {
+        const cliente = await prisma.clientes.findUnique({ where: { id: parseInt(req.params.id, 10) } });
+        if (!cliente) return res.status(404).json({ success: false, mensaje: 'Cliente no encontrado' });
+        if (cliente.tipoDespliegue !== 'marca_blanca') {
+            return res.status(400).json({ success: false, mensaje: 'Solo aplica a clientes marca_blanca (los tenant comparten versión con todos)' });
+        }
+        if (!req.body?.versionRef) {
+            return res.status(400).json({ success: false, mensaje: 'versionRef es requerido (rama, tag o commit)' });
+        }
+        if (!req.body?.confirmar) {
+            return res.status(400).json({
+                success: false,
+                codigo: 'CONFIRMACION_REQUERIDA',
+                mensaje: `Esto redespliega la infraestructura real de "${cliente.nombreComercial}" a "${req.body.versionRef}". Reenviar con { "confirmar": true }.`,
+            });
+        }
+        if (cliente.aprovisionamiento !== 'listo') {
+            return res.status(400).json({ success: false, mensaje: `El cliente está en estado "${cliente.aprovisionamiento}", no "listo" — no se puede actualizar todavía` });
+        }
+
+        await prisma.clientes.update({ where: { id: cliente.id }, data: { aprovisionamiento: 'aprovisionando' } });
+        const versionRef = req.body.versionRef;
+
+        actualizarVersionMarcaBlanca(cliente, versionRef, (msg) => console.log(`[actualizar#${cliente.id}]`, msg))
+            .then(() => prisma.clientes.update({ where: { id: cliente.id }, data: { aprovisionamiento: 'listo' } }))
+            .catch(async (err) => {
+                console.error(`Actualización de versión de "${cliente.nombreComercial}" falló:`, err.message);
+                await prisma.clientes.update({
+                    where: { id: cliente.id },
+                    data: { aprovisionamiento: 'error', notas: `${cliente.notas ? cliente.notas + '\n' : ''}[actualizar-version] ${err.message}` },
+                }).catch(() => {});
+            });
+
+        res.status(202).json({ success: true, mensaje: `Actualización a "${versionRef}" iniciada (solo este cliente)`, data: { aprovisionamiento: 'aprovisionando', versionRef } });
+    } catch (error) {
+        console.error('POST /clientes/:id/actualizar-version:', error);
+        res.status(500).json({ success: false, mensaje: 'Error al actualizar versión' });
     }
 });
 

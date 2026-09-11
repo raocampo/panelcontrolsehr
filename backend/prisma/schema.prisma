@@ -39,6 +39,7 @@ model clientes {
   dominioBackend        String?       @db.VarChar(200)
   railwayProjectId      String?       @db.VarChar(100)
   vercelProjectId       String?       @db.VarChar(100)
+  versionRef            String        @default("main") @db.VarChar(100) // marca_blanca: rama/tag/commit al que está fijado (no sigue main en vivo)
   secretoControlPlane   String?       @db.VarChar(100) // marca_blanca: secreto para PUT /api/admin/licencia de esa instancia
   estado                String        @default("trial") @db.VarChar(30) // trial | activo | bloqueado | cancelado
   trialInicioAt         DateTime?

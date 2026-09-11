@@ -48,13 +48,21 @@ async function crearProyecto({ nombre, repo, rootDirectory, framework, envVars }
 }
 
 /**
- * Dispara el primer deploy: crear el proyecto con gitRepository NO despliega
- * solo — solo conecta pushes futuros. Hay que pedir el deploy explícito.
+ * Dispara un deploy: crear el proyecto con gitRepository NO despliega solo
+ * (solo conecta pushes futuros) — hay que pedirlo explícito, y también sirve
+ * para redesplegar un proyecto YA existente a un ref distinto (actualizar un
+ * cliente a una versión nueva).
+ *
+ * El `name` es obligatorio para la API y debe ser el nombre REAL y actual del
+ * proyecto en Vercel — no un valor recalculado del lado del cliente (puede
+ * no coincidir si Vercel le añadió un sufijo por colisión al crearlo), así
+ * que se consulta siempre en vez de asumirlo.
  */
-async function crearDeployment({ nombre, projectId, repo, ref = 'main' }) {
+async function crearDeployment({ projectId, repo, ref = 'main' }) {
+    const proyecto = await llamar('GET', `/v9/projects/${projectId}${teamQuery()}`);
     const [org, repoName] = repo.split('/');
     const data = await llamar('POST', `/v13/deployments${teamQuery()}`, {
-        name: nombre,
+        name: proyecto.name,
         project: projectId,
         target: 'production',
         gitSource: { type: 'github', ref, org, repo: repoName },
@@ -78,20 +86,20 @@ async function dominioDefault(projectId) {
     return data.targets?.production?.alias?.[0] || data.alias?.[0]?.domain || `${data.name}.vercel.app`;
 }
 
-async function ultimoDeployment(projectId) {
-    const data = await llamar('GET', `/v6/deployments?projectId=${projectId}&limit=1${teamQuery() ? '&' + teamQuery().slice(1) : ''}`);
-    return data.deployments?.[0] || null;
+async function obtenerDeployment(deploymentId) {
+    return llamar('GET', `/v13/deployments/${deploymentId}${teamQuery()}`);
 }
 
-async function esperarDeployReady(projectId, { timeoutMs = 5 * 60 * 1000, intervaloMs = 5000 } = {}) {
+/** Espera a que un deployment CONCRETO (por id, el que devolvió crearDeployment) quede READY. */
+async function esperarDeployment(deploymentId, { timeoutMs = 5 * 60 * 1000, intervaloMs = 5000 } = {}) {
     const limite = Date.now() + timeoutMs;
     while (Date.now() < limite) {
-        const d = await ultimoDeployment(projectId);
-        if (d && d.readyState === 'READY') return d;
-        if (d && ['ERROR', 'CANCELED'].includes(d.readyState)) throw new Error(`Deployment de Vercel terminó en ${d.readyState}`);
+        const d = await obtenerDeployment(deploymentId);
+        if (d.readyState === 'READY') return d;
+        if (['ERROR', 'CANCELED'].includes(d.readyState)) throw new Error(`Deployment ${deploymentId} de Vercel terminó en ${d.readyState}`);
         await new Promise((r) => setTimeout(r, intervaloMs));
     }
-    throw new Error('Timeout esperando el deploy de Vercel');
+    throw new Error(`Timeout esperando el deployment ${deploymentId} de Vercel`);
 }
 
-module.exports = { crearProyecto, crearDeployment, agregarVariable, desactivarProteccionSSO, dominioDefault, ultimoDeployment, esperarDeployReady };
+module.exports = { crearProyecto, crearDeployment, agregarVariable, desactivarProteccionSSO, dominioDefault, obtenerDeployment, esperarDeployment };

@@ -73,6 +73,14 @@ variables de otros servicios durante el build).
   ARQUITECTURA_MULTITENANT_MARCA_BLANCA.md`): falta de aplicación de schema en
   BD nueva, `targetPort` de dominio hardcodeado mal, Vercel no desplegaba solo,
   condición de carrera por doble redeploy.
+- **Versionado por cliente + actualización selectiva** (2026-09-11): cada
+  cliente marca_blanca queda fijado a un `versionRef` (rama/tag/commit) propio
+  — ya no sigue `main` en vivo, así que un push no redespliega a todos a la
+  vez. `POST /api/clientes/:id/actualizar-version` (`{versionRef, confirmar:true}`)
+  actualiza **un solo cliente** (backend+frontend) sin tocar Postgres ni a
+  ningún otro — probado en vivo contra el cliente de prueba real. Usa
+  `serviceInstanceDeployV2` de Railway (deploy a un id exacto, sin la
+  ambigüedad de "cuál es el último deployment").
 
 ## Stack
 
