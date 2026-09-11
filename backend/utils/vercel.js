@@ -47,6 +47,21 @@ async function crearProyecto({ nombre, repo, rootDirectory, framework, envVars }
     return data.id;
 }
 
+/**
+ * Dispara el primer deploy: crear el proyecto con gitRepository NO despliega
+ * solo — solo conecta pushes futuros. Hay que pedir el deploy explícito.
+ */
+async function crearDeployment({ nombre, projectId, repo, ref = 'main' }) {
+    const [org, repoName] = repo.split('/');
+    const data = await llamar('POST', `/v13/deployments${teamQuery()}`, {
+        name: nombre,
+        project: projectId,
+        target: 'production',
+        gitSource: { type: 'github', ref, org, repo: repoName },
+    });
+    return data.id || data.uid;
+}
+
 async function agregarVariable(projectId, { key, value, target }) {
     return llamar('POST', `/v10/projects/${projectId}/env${teamQuery()}`, {
         key, value, type: 'encrypted', target: target || ['production'],
@@ -79,4 +94,4 @@ async function esperarDeployReady(projectId, { timeoutMs = 5 * 60 * 1000, interv
     throw new Error('Timeout esperando el deploy de Vercel');
 }
 
-module.exports = { crearProyecto, agregarVariable, desactivarProteccionSSO, dominioDefault, ultimoDeployment, esperarDeployReady };
+module.exports = { crearProyecto, crearDeployment, agregarVariable, desactivarProteccionSSO, dominioDefault, ultimoDeployment, esperarDeployReady };

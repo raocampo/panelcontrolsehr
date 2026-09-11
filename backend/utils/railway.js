@@ -41,12 +41,21 @@ async function introspeccionSchema() {
     return gql(`query { __schema { mutationType { fields { name } } } }`, {});
 }
 
-async function crearProyecto(nombre) {
+async function crearProyecto(nombre, workspaceId) {
+    const input = { name: nombre, isPublic: false };
+    if (workspaceId || process.env.RAILWAY_WORKSPACE_ID) {
+        input.workspaceId = workspaceId || process.env.RAILWAY_WORKSPACE_ID;
+    }
     const data = await gql(
         `mutation($input: ProjectCreateInput!) { projectCreate(input: $input) { id } }`,
-        { input: { name: nombre, isPublic: false } },
+        { input },
     );
     return data.projectCreate.id;
+}
+
+/** Identidad de la cuenta dueña del token + sus workspaces (para ubicar el workspaceId correcto). */
+async function cuentaInfo() {
+    return gql(`{ me { id email workspaces { id name } } }`, {});
 }
 
 async function obtenerEnvironmentProduccion(projectId) {
@@ -68,19 +77,26 @@ async function crearServicioImagen({ projectId, nombre, imagen }) {
     return data.serviceCreate.id;
 }
 
-async function crearServicioRepo({ projectId, nombre, repo, rootDirectory }) {
+async function crearServicioRepo({ projectId, nombre, repo, rootDirectory, preDeployCommand }) {
     const data = await gql(
         `mutation($input: ServiceCreateInput!) { serviceCreate(input: $input) { id } }`,
         { input: { projectId, name: nombre, source: { repo } } },
     );
     const serviceId = data.serviceCreate.id;
-    if (rootDirectory) {
+    const instanceInput = {};
+    if (rootDirectory) instanceInput.rootDirectory = rootDirectory;
+    // Ojo: si el railway.json del repo define un campo, la API NO puede
+    // sobreescribirlo (ver docs/.../ARQUITECTURA_MULTITENANT_MARCA_BLANCA.md).
+    // preDeployCommand no está definido en backend/railway.json de SEHR, así
+    // que sí se puede fijar por servicio sin tocar el repo.
+    if (preDeployCommand) instanceInput.preDeployCommand = preDeployCommand;
+    if (Object.keys(instanceInput).length) {
         const environmentId = await obtenerEnvironmentProduccion(projectId);
         await gql(
             `mutation($serviceId: String!, $environmentId: String!, $input: ServiceInstanceUpdateInput!) {
                 serviceInstanceUpdate(serviceId: $serviceId, environmentId: $environmentId, input: $input)
             }`,
-            { serviceId, environmentId, input: { rootDirectory } },
+            { serviceId, environmentId, input: instanceInput },
         );
     }
     return serviceId;
@@ -124,14 +140,32 @@ async function ultimoDeployment({ projectId, serviceId }) {
     return data.deployments.edges[0]?.node || null;
 }
 
-/** Espera hasta que el último deployment del servicio quede SUCCESS (o falle/timeout). */
-async function esperarDeploySuccess({ projectId, serviceId }, { timeoutMs = 5 * 60 * 1000, intervaloMs = 5000 } = {}) {
+/**
+ * Espera hasta que el ÚLTIMO deployment del servicio quede SUCCESS (o falle/timeout).
+ *
+ * Cambiar variables/config puede disparar más de un deploy casi simultáneo
+ * (uno por cada mutación que lo provoca) — si dos corren su preDeployCommand
+ * en paralelo contra la misma BD nueva, el segundo falla con "ya existe" aunque
+ * el primero haya salido bien. Por eso no basta con mirar el más reciente una
+ * sola vez: se exige que sea el mismo ID de forma estable por `settleMs` antes
+ * de resolverlo, así un segundo trigger que llegue tarde no nos hace fallar
+ * sobre un resultado que ya estaba resuelto.
+ */
+async function esperarDeploySuccess({ projectId, serviceId }, { timeoutMs = 5 * 60 * 1000, intervaloMs = 4000, settleMs = 10000 } = {}) {
     const limite = Date.now() + timeoutMs;
+    let ultimoIdVisto = null;
+    let ultimoIdDesde = 0;
     while (Date.now() < limite) {
         const d = await ultimoDeployment({ projectId, serviceId });
-        if (d && d.status === 'SUCCESS') return d;
-        if (d && ['FAILED', 'CRASHED', 'REMOVED'].includes(d.status)) {
-            throw new Error(`Deployment terminó en estado ${d.status}`);
+        if (d) {
+            if (d.id !== ultimoIdVisto) { ultimoIdVisto = d.id; ultimoIdDesde = Date.now(); }
+            const estable = Date.now() - ultimoIdDesde >= settleMs;
+            if (estable) {
+                if (d.status === 'SUCCESS') return d;
+                if (['FAILED', 'CRASHED', 'REMOVED'].includes(d.status)) {
+                    throw new Error(`Deployment terminó en estado ${d.status} (id ${d.id})`);
+                }
+            }
         }
         await new Promise((r) => setTimeout(r, intervaloMs));
     }
@@ -141,6 +175,7 @@ async function esperarDeploySuccess({ projectId, serviceId }, { timeoutMs = 5 * 
 module.exports = {
     IMAGEN_POSTGRES,
     introspeccionSchema,
+    cuentaInfo,
     crearProyecto,
     obtenerEnvironmentProduccion,
     crearServicioImagen,

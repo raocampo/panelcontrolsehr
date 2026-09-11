@@ -57,16 +57,22 @@ variables de otros servicios durante el build).
   (`PUT /api/admin/licencia` en la instancia dedicada del cliente,
   `utils/licenciaBridge.js`) — sin cambios en esta fase.
 
-- **Aprovisionamiento automático de `marca_blanca`** (2026-09-10, FASE 6 slice 2):
+- **Aprovisionamiento automático de `marca_blanca`** (FASE 6 slice 2):
   `POST /api/clientes/:id/aprovisionar` con `{ "confirmar": true }` crea un
   proyecto Railway real (Postgres + backend SUJAM desde `raocampo/SEHR`,
   `MODO_DESPLIEGUE=single`) y un proyecto Vercel real (frontend), y siembra la
   instancia vía `POST /api/admin/bootstrap` (nuevo en SUJAM). Requiere
-  `RAILWAY_API_TOKEN` y `VERCEL_PERSONAL_ACCESS_TOKEN` configurados — sin
+  `RAILWAY_API_TOKEN` (**Account Token**, no Project Token — ver `.env.example`),
+  `RAILWAY_WORKSPACE_ID` y `VERCEL_PERSONAL_ACCESS_TOKEN` configurados — sin
   confirmación explícita o sin esos tokens, responde 400 y no crea nada.
-  **Código escrito y verificado contra la documentación pública de Railway/
-  Vercel; sin ejecutar aún en vivo** (crea recursos reales y facturables —
-  la primera corrida debe hacerse con el usuario presente).
+  **Probado en vivo el 2026-09-11** contra un cliente de prueba real: proyecto
+  Railway + Vercel creados, backend saludable (`/api/health` con BD conectada),
+  bootstrap sembró la instancia, login real funcionando, frontend sirviendo 200.
+  4 bugs reales encontrados y corregidos en el camino (detalle completo en
+  `sistemaSUJAM/docs/Documentación/05-propuestas-tecnicas/
+  ARQUITECTURA_MULTITENANT_MARCA_BLANCA.md`): falta de aplicación de schema en
+  BD nueva, `targetPort` de dominio hardcodeado mal, Vercel no desplegaba solo,
+  condición de carrera por doble redeploy.
 
 ## Stack
 
@@ -112,7 +118,9 @@ sigue creando el registro pero devuelve `avisoAprov` en vez de aprovisionar.
 - Frontend del panel: UI para elegir `tipoEmpresa` al crear un cliente, mostrar
   `aprovisionamiento` y el dominio, botones "Reintentar aprovisionar"
   (con el aviso de costo para `marca_blanca`).
-- **Primera corrida real de aprovisionamiento `marca_blanca`**: configurar
-  `RAILWAY_API_TOKEN`/`VERCEL_PERSONAL_ACCESS_TOKEN` y probar contra un cliente
-  de prueba real, con el usuario presente (crea infraestructura facturable).
+- Configurar `RAILWAY_API_TOKEN`/`RAILWAY_WORKSPACE_ID`/`VERCEL_PERSONAL_ACCESS_TOKEN`
+  en el Railway real de este panel (ya probados en local contra infraestructura real).
+- Decidir qué hacer con el proyecto de prueba "sujam-qa-prueba-marca-blanca"
+  (Railway + Vercel) creado durante la validación del 2026-09-11 — mantenerlo
+  como referencia o borrarlo.
 - Cargar los clientes reales existentes de SUJAM en la tabla `clientes` de este panel.

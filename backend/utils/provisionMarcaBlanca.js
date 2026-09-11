@@ -54,8 +54,17 @@ async function provisionarMarcaBlanca(cliente, opts = {}, log = console.log) {
     });
 
     log('   • Backend SUJAM (repo, root=backend)...');
-    const backendServiceId = await railway.crearServicioRepo({ projectId, nombre: 'backend', repo: REPO, rootDirectory: 'backend' });
-    const backendDomain = await railway.crearDominio({ serviceId: backendServiceId, environmentId, targetPort: 5500 });
+    // backend/railway.json de SEHR no aplica ninguna migración/push contra una
+    // BD nueva (el repo asume una BD ya restaurada, como la de producción) —
+    // se fija por-servicio vía la API, sin tocar el repo compartido.
+    const backendServiceId = await railway.crearServicioRepo({
+        projectId, nombre: 'backend', repo: REPO, rootDirectory: 'backend',
+        preDeployCommand: ['npx prisma db push --accept-data-loss --skip-generate'],
+    });
+    // Sin targetPort explícito: Railway inyecta su propio PORT en runtime
+    // (no siempre 5500, el server.js del repo respeta process.env.PORT) y
+    // autodetecta a qué puerto enrutar el dominio.
+    const backendDomain = await railway.crearDominio({ serviceId: backendServiceId, environmentId });
     const backendUrl = `https://${backendDomain}`;
 
     await railway.setVariables({
@@ -72,7 +81,10 @@ async function provisionarMarcaBlanca(cliente, opts = {}, log = console.log) {
     });
 
     log('   • esperando el primer deploy del backend...');
-    await railway.redeploy({ serviceId: backendServiceId, environmentId });
+    // No disparar un redeploy manual acá: crear el servicio + fijar variables
+    // ya dispara un deploy solo. Pedir uno de más casi al mismo tiempo hace que
+    // Railway corra dos preDeployCommand en paralelo contra la misma BD nueva
+    // (el segundo falla con "ya existe" y tira abajo el primero, que sí sirvió).
     await railway.esperarDeploySuccess({ projectId, serviceId: backendServiceId });
 
     log('\n▲ Vercel — frontend');
@@ -84,13 +96,15 @@ async function provisionarMarcaBlanca(cliente, opts = {}, log = console.log) {
         ],
     });
     await vercel.desactivarProteccionSSO(vercelProjectId).catch((e) => log(`   (no se pudo desactivar SSO: ${e.message})`));
+    // Crear el proyecto con gitRepository conecta pushes futuros, pero NO
+    // dispara un primer deploy — hay que pedirlo explícito.
+    await vercel.crearDeployment({ nombre: nombreProyecto, projectId: vercelProjectId, repo: REPO });
     await vercel.esperarDeployReady(vercelProjectId);
     const frontendDomain = await vercel.dominioDefault(vercelProjectId);
     const frontendUrl = `https://${frontendDomain}`;
 
-    log('   • actualizando FRONTEND_URL en el backend y redeploy final...');
+    log('   • actualizando FRONTEND_URL en el backend...');
     await railway.setVariables({ projectId, environmentId, serviceId: backendServiceId, variables: { FRONTEND_URL: frontendUrl } });
-    await railway.redeploy({ serviceId: backendServiceId, environmentId });
     await railway.esperarDeploySuccess({ projectId, serviceId: backendServiceId });
 
     log('\n🌱 Sembrando la instancia (POST /api/admin/bootstrap)...');
