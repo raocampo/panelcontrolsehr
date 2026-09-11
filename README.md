@@ -57,9 +57,16 @@ variables de otros servicios durante el build).
   (`PUT /api/admin/licencia` en la instancia dedicada del cliente,
   `utils/licenciaBridge.js`) — sin cambios en esta fase.
 
-**Pendiente (Fase 4 del plan de marca blanca):** aprovisionamiento automático
-de infraestructura Railway/Vercel para clientes `marca_blanca` (hoy sigue
-manual) — sesión dedicada aparte.
+- **Aprovisionamiento automático de `marca_blanca`** (2026-09-10, FASE 6 slice 2):
+  `POST /api/clientes/:id/aprovisionar` con `{ "confirmar": true }` crea un
+  proyecto Railway real (Postgres + backend SUJAM desde `raocampo/SEHR`,
+  `MODO_DESPLIEGUE=single`) y un proyecto Vercel real (frontend), y siembra la
+  instancia vía `POST /api/admin/bootstrap` (nuevo en SUJAM). Requiere
+  `RAILWAY_API_TOKEN` y `VERCEL_PERSONAL_ACCESS_TOKEN` configurados — sin
+  confirmación explícita o sin esos tokens, responde 400 y no crea nada.
+  **Código escrito y verificado contra la documentación pública de Railway/
+  Vercel; sin ejecutar aún en vivo** (crea recursos reales y facturables —
+  la primera corrida debe hacerse con el usuario presente).
 
 ## Stack
 
@@ -103,6 +110,9 @@ sigue creando el registro pero devuelve `avisoAprov` en vez de aprovisionar.
   este panel apuntando al backend multi-tenant real de SUJAM (hoy solo probado
   en local).
 - Frontend del panel: UI para elegir `tipoEmpresa` al crear un cliente, mostrar
-  `aprovisionamiento` y el dominio del tenant, botón "Reintentar aprovisionar".
-- Fase 4 (aprovisionamiento automático Railway/Vercel para `marca_blanca`) — sesión dedicada aparte.
+  `aprovisionamiento` y el dominio, botones "Reintentar aprovisionar"
+  (con el aviso de costo para `marca_blanca`).
+- **Primera corrida real de aprovisionamiento `marca_blanca`**: configurar
+  `RAILWAY_API_TOKEN`/`VERCEL_PERSONAL_ACCESS_TOKEN` y probar contra un cliente
+  de prueba real, con el usuario presente (crea infraestructura facturable).
 - Cargar los clientes reales existentes de SUJAM en la tabla `clientes` de este panel.

@@ -5,6 +5,7 @@ const prisma = require('../config/prisma');
 const { proteger } = require('../middleware/auth');
 const { notificarEstado } = require('../utils/estadoCliente');
 const sujamTenants = require('../utils/sujamTenants');
+const { provisionarMarcaBlanca } = require('../utils/provisionMarcaBlanca');
 
 router.use(proteger);
 
@@ -122,7 +123,7 @@ router.post('/', async (req, res) => {
                 slug,
                 dominioFrontend, dominioBackend, railwayProjectId, vercelProjectId,
                 estado: estado || 'trial',
-                aprovisionamiento: tipoDespliegue === 'tenant_corpsimtelec' ? 'pendiente' : 'listo',
+                aprovisionamiento: 'pendiente',
                 trialInicioAt: trialInicioAt ? new Date(trialInicioAt) : null,
                 trialExpiraAt: trialExpiraAt ? new Date(trialExpiraAt) : null,
                 trialSoloLecturaHasta: trialSoloLecturaHasta ? new Date(trialSoloLecturaHasta) : null,
@@ -149,20 +150,54 @@ router.post('/', async (req, res) => {
     }
 });
 
-// POST /api/clientes/:id/aprovisionar — reintento del aprovisionamiento del tenant
+// POST /api/clientes/:id/aprovisionar — dispara (o reintenta) el aprovisionamiento
 router.post('/:id/aprovisionar', async (req, res) => {
     try {
         const cliente = await prisma.clientes.findUnique({ where: { id: parseInt(req.params.id, 10) } });
         if (!cliente) return res.status(404).json({ success: false, mensaje: 'Cliente no encontrado' });
-        if (cliente.tipoDespliegue !== 'tenant_corpsimtelec') {
-            return res.status(400).json({ success: false, mensaje: 'Solo aplica a clientes tenant_corpsimtelec' });
+
+        if (cliente.tipoDespliegue === 'tenant_corpsimtelec') {
+            if (!cliente.slug) {
+                await prisma.clientes.update({ where: { id: cliente.id }, data: { slug: await slugUnico(slugify(cliente.nombreComercial)) } });
+            }
+            const fresco = await prisma.clientes.findUnique({ where: { id: cliente.id } });
+            const actualizado = await aprovisionarTenant(fresco);
+            return res.json({ success: true, data: actualizado });
+        }
+
+        // marca_blanca: crea infraestructura REAL y facturable en Railway/Vercel.
+        // Requiere confirmación explícita — nunca se dispara solo.
+        if (!req.body?.confirmar) {
+            return res.status(400).json({
+                success: false,
+                codigo: 'CONFIRMACION_REQUERIDA',
+                mensaje: 'Esto crea un proyecto real en Railway y Vercel (con costo). Reenviar con { "confirmar": true }.',
+            });
+        }
+        if (!process.env.RAILWAY_API_TOKEN || !process.env.VERCEL_PERSONAL_ACCESS_TOKEN) {
+            return res.status(400).json({ success: false, mensaje: 'RAILWAY_API_TOKEN / VERCEL_PERSONAL_ACCESS_TOKEN no configurados en el panel' });
+        }
+        if (!cliente.contactoEmail) {
+            return res.status(400).json({ success: false, mensaje: 'contactoEmail es requerido (será el admin de la instancia)' });
         }
         if (!cliente.slug) {
             await prisma.clientes.update({ where: { id: cliente.id }, data: { slug: await slugUnico(slugify(cliente.nombreComercial)) } });
         }
+        await prisma.clientes.update({ where: { id: cliente.id }, data: { aprovisionamiento: 'aprovisionando' } });
+
         const fresco = await prisma.clientes.findUnique({ where: { id: cliente.id } });
-        const actualizado = await aprovisionarTenant(fresco);
-        res.json({ success: true, data: actualizado });
+        // Async: tarda minutos (Railway + Vercel). No bloquea la respuesta; el
+        // progreso se sigue con GET /:id/aprovisionamiento.
+        provisionarMarcaBlanca(fresco, { adminNombre: req.body.adminNombre }, (msg) => console.log(`[aprovisionar#${cliente.id}]`, msg))
+            .catch(async (err) => {
+                console.error(`Aprovisionamiento marca_blanca de "${fresco.nombreComercial}" falló:`, err.message);
+                await prisma.clientes.update({
+                    where: { id: cliente.id },
+                    data: { aprovisionamiento: 'error', notas: `${fresco.notas ? fresco.notas + '\n' : ''}[aprovisionamiento] ${err.message}` },
+                }).catch(() => {});
+            });
+
+        res.status(202).json({ success: true, mensaje: 'Aprovisionamiento de infraestructura iniciado (puede tardar varios minutos)', data: { aprovisionamiento: 'aprovisionando' } });
     } catch (error) {
         console.error('POST /clientes/:id/aprovisionar:', error);
         res.status(500).json({ success: false, mensaje: 'Error al aprovisionar' });
