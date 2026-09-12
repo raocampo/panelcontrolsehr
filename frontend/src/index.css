@@ -91,7 +91,13 @@ th { background: #f7f8fa; font-weight: 700; color: #445; }
 .badge-contactada { background: #fff4de; color: #9a6700; }
 .badge-convertida { background: #e3f7e6; color: #1a7a34; }
 .badge-descartada { background: #eceff2; color: #667; }
+.badge-pendiente { background: #eceff2; color: #667; }
+.badge-aprovisionando { background: #e6eefc; color: #1c56b0; }
+.badge-listo { background: #e3f7e6; color: #1a7a34; }
+.badge-error { background: #fdecea; color: #b3261e; }
 .texto-alerta { color: #b3261e; font-weight: 700; }
+.texto-chico { font-size: 0.75rem; color: #889; }
+.info-aprovisionamiento { background: #f7f8fa; border-radius: 6px; padding: 8px 10px; font-size: 0.85rem; }
 
 .modal-overlay {
   position: fixed; inset: 0; background: rgba(20,25,35,0.5);

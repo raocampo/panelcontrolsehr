@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import api from '../services/api';
 import ClienteFormModal from './ClienteFormModal';
 
@@ -7,6 +7,19 @@ const ESTADO_LABELS = {
   activo: 'Activo',
   bloqueado: 'Bloqueado',
   cancelado: 'Cancelado',
+};
+
+const TIPO_EMPRESA_LABELS = {
+  medico: 'Médico',
+  consorcio: 'Consorcio',
+  hospital_clinica: 'Hospital/Clínica',
+};
+
+const APROVISIONAMIENTO_LABELS = {
+  pendiente: 'Pendiente',
+  aprovisionando: 'Aprovisionando…',
+  listo: 'Listo',
+  error: 'Error',
 };
 
 // Mismo cálculo que backend/routes/auth.js de SUJAM (trialEstado por fecha)
@@ -49,11 +62,64 @@ export default function Dashboard({ staff, onLogout }) {
     Promise.all([cargarClientes(), cargarSolicitudes()]).finally(() => setCargando(false));
   }, []);
 
+  // Mientras haya algún cliente "aprovisionando", refresca su estado real cada
+  // pocos segundos — el tenant se sincroniza consultando SUJAM (GET
+  // /:id/aprovisionamiento); marca_blanca lo actualiza sola su propio worker
+  // async, así que para esos alcanza con releer la lista.
+  const clientesRef = useRef(clientes);
+  useEffect(() => { clientesRef.current = clientes; }, [clientes]);
+  useEffect(() => {
+    const id = setInterval(async () => {
+      const enCurso = clientesRef.current.filter((c) => c.aprovisionamiento === 'aprovisionando');
+      if (enCurso.length === 0) return;
+      await Promise.all(
+        enCurso
+          .filter((c) => c.tipoDespliegue === 'tenant_corpsimtelec')
+          .map((c) => api.get(`/clientes/${c.id}/aprovisionamiento`).catch(() => {})),
+      );
+      cargarClientes();
+    }, 6000);
+    return () => clearInterval(id);
+  }, []);
+
   const handleDarDeAlta = async (cliente) => {
     if (!window.confirm(`¿Confirmar que "${cliente.nombreComercial}" ya pagó y pasa a estado Activo?`)) return;
     const res = await api.put(`/clientes/${cliente.id}/dar-de-alta`);
     if (res.data.avisoBridge) window.alert(res.data.avisoBridge);
     cargarClientes();
+  };
+
+  const handleAprovisionar = async (cliente) => {
+    try {
+      if (cliente.tipoDespliegue === 'marca_blanca') {
+        if (!window.confirm(
+          `Esto crea infraestructura REAL y facturable (Railway + Vercel) para "${cliente.nombreComercial}". ¿Confirmar?`,
+        )) return;
+        const res = await api.post(`/clientes/${cliente.id}/aprovisionar`, { confirmar: true });
+        window.alert(res.data.mensaje || 'Aprovisionamiento iniciado.');
+      } else {
+        await api.post(`/clientes/${cliente.id}/aprovisionar`);
+      }
+      cargarClientes();
+    } catch (err) {
+      window.alert(err.response?.data?.mensaje || 'Error al aprovisionar');
+    }
+  };
+
+  const handleActualizarVersion = async (cliente) => {
+    const versionRef = window.prompt(
+      `Rama, tag o commit al que fijar "${cliente.nombreComercial}" (no afecta a otros clientes):`,
+      cliente.versionRef || 'main',
+    );
+    if (!versionRef) return;
+    if (!window.confirm(`Esto redespliega la infraestructura real de "${cliente.nombreComercial}" a "${versionRef}". ¿Confirmar?`)) return;
+    try {
+      const res = await api.post(`/clientes/${cliente.id}/actualizar-version`, { versionRef, confirmar: true });
+      window.alert(res.data.mensaje || 'Actualización iniciada.');
+      cargarClientes();
+    } catch (err) {
+      window.alert(err.response?.data?.mensaje || 'Error al actualizar versión');
+    }
   };
 
   const handleNuevoCliente = () => {
@@ -103,7 +169,9 @@ export default function Dashboard({ staff, onLogout }) {
               <tr>
                 <th>Nombre comercial</th>
                 <th>Tipo</th>
+                <th>Empresa</th>
                 <th>Dominio</th>
+                <th>Aprovisionamiento</th>
                 <th>Estado</th>
                 <th>Trial</th>
                 <th>Contacto</th>
@@ -117,7 +185,20 @@ export default function Dashboard({ staff, onLogout }) {
                   <tr key={c.id}>
                     <td>{c.nombreComercial}</td>
                     <td>{c.tipoDespliegue === 'marca_blanca' ? 'Marca blanca' : 'Tenant CorpSimtelec'}</td>
-                    <td>{c.dominioFrontend || '—'}</td>
+                    <td>{TIPO_EMPRESA_LABELS[c.tipoEmpresa] || c.tipoEmpresa}</td>
+                    <td>
+                      {c.dominioFrontend
+                        ? <a href={`https://${c.dominioFrontend}`} target="_blank" rel="noreferrer">{c.dominioFrontend}</a>
+                        : '—'}
+                    </td>
+                    <td>
+                      <span className={`badge badge-${c.aprovisionamiento}`}>
+                        {APROVISIONAMIENTO_LABELS[c.aprovisionamiento] || c.aprovisionamiento}
+                      </span>
+                      {c.tipoDespliegue === 'marca_blanca' && c.aprovisionamiento === 'listo' && (
+                        <div className="texto-chico">v: {c.versionRef}</div>
+                      )}
+                    </td>
                     <td><span className={`badge badge-${c.estado}`}>{ESTADO_LABELS[c.estado] || c.estado}</span></td>
                     <td>{trial ? <span className={trial.vencido ? 'texto-alerta' : ''}>{trial.texto}</span> : '—'}</td>
                     <td>{c.contactoEmail || '—'}</td>
@@ -126,12 +207,20 @@ export default function Dashboard({ staff, onLogout }) {
                       {c.estado === 'trial' && (
                         <button className="btn-link" onClick={() => handleDarDeAlta(c)}>Dar de alta</button>
                       )}
+                      {(c.aprovisionamiento === 'pendiente' || c.aprovisionamiento === 'error') && (
+                        <button className="btn-link" onClick={() => handleAprovisionar(c)}>
+                          {c.aprovisionamiento === 'error' ? 'Reintentar' : 'Aprovisionar'}
+                        </button>
+                      )}
+                      {c.tipoDespliegue === 'marca_blanca' && c.aprovisionamiento === 'listo' && (
+                        <button className="btn-link" onClick={() => handleActualizarVersion(c)}>Actualizar versión</button>
+                      )}
                     </td>
                   </tr>
                 );
               })}
               {clientes.length === 0 && (
-                <tr><td colSpan={7} className="vacio">Sin clientes registrados todavía.</td></tr>
+                <tr><td colSpan={9} className="vacio">Sin clientes registrados todavía.</td></tr>
               )}
             </tbody>
           </table>

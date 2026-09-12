@@ -3,9 +3,16 @@ import api from '../services/api';
 
 const vacio = {
   nombreComercial: '', razonSocial: '', contactoNombre: '', contactoEmail: '', contactoTelefono: '',
-  tipoDespliegue: 'marca_blanca', dominioFrontend: '', dominioBackend: '',
+  tipoDespliegue: 'marca_blanca', tipoEmpresa: 'consorcio', ruc: '', slug: '',
+  dominioFrontend: '', dominioBackend: '',
   railwayProjectId: '', vercelProjectId: '', estado: 'trial',
   trialInicioAt: '', trialExpiraAt: '', trialSoloLecturaHasta: '', notas: '',
+};
+
+const TIPO_EMPRESA_LABELS = {
+  medico: 'Médico (V1)',
+  consorcio: 'Consorcio (V2)',
+  hospital_clinica: 'Hospital / Clínica (V3)',
 };
 
 const soloFecha = (valor) => (valor ? String(valor).slice(0, 10) : '');
@@ -50,6 +57,15 @@ export default function ClienteFormModal({ cliente, onClose, onGuardado }) {
       <form className="modal-caja" onClick={(e) => e.stopPropagation()} onSubmit={handleSubmit}>
         <h2>{cliente ? 'Editar cliente' : 'Nuevo cliente'}</h2>
         {error && <div className="mensaje-error">{error}</div>}
+        {cliente && (
+          <div className="info-aprovisionamiento">
+            Aprovisionamiento: <span className={`badge badge-${cliente.aprovisionamiento}`}>{cliente.aprovisionamiento}</span>
+            {cliente.tipoDespliegue === 'marca_blanca' && <> · versión fijada: <strong>{cliente.versionRef}</strong></>}
+            {cliente.dominioFrontend && (
+              <> · <a href={`https://${cliente.dominioFrontend}`} target="_blank" rel="noreferrer">{cliente.dominioFrontend}</a></>
+            )}
+          </div>
+        )}
 
         <div className="form-grid">
           <label>Nombre comercial *
@@ -64,6 +80,27 @@ export default function ClienteFormModal({ cliente, onClose, onGuardado }) {
               <option value="tenant_corpsimtelec">Tenant CorpSimtelec</option>
             </select>
           </label>
+          <label>Tipo de empresa (plan/módulos) *
+            <select value={form.tipoEmpresa || 'consorcio'} onChange={handleChange('tipoEmpresa')} required>
+              {Object.entries(TIPO_EMPRESA_LABELS).map(([v, label]) => (
+                <option key={v} value={v}>{label}</option>
+              ))}
+            </select>
+          </label>
+          <label>RUC
+            <input value={form.ruc || ''} onChange={handleChange('ruc')} maxLength={13} />
+          </label>
+          {form.tipoDespliegue === 'tenant_corpsimtelec' && (
+            cliente ? (
+              <label>Slug (subdominio)
+                <input value={form.slug || '—'} readOnly title="El slug se fija al aprovisionar y no se puede editar desde acá" />
+              </label>
+            ) : (
+              <label>Slug (subdominio)
+                <input value={form.slug || ''} onChange={handleChange('slug')} placeholder="vacío = se genera del nombre comercial" />
+              </label>
+            )
+          )}
           <label>Estado
             <select value={form.estado} onChange={handleChange('estado')}>
               <option value="trial">Trial</option>
