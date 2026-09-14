@@ -114,10 +114,23 @@ export default function ClienteFormModal({ cliente, onClose, onGuardado }) {
           </label>
           <label>Contacto — email
             <input type="email" value={form.contactoEmail || ''} onChange={handleChange('contactoEmail')} />
+            {!cliente && form.tipoDespliegue === 'tenant_corpsimtelec' && (
+              <span className="texto-chico">Este email va a ser el usuario admin para entrar al sistema del cliente.</span>
+            )}
           </label>
           <label>Contacto — teléfono
             <input value={form.contactoTelefono || ''} onChange={handleChange('contactoTelefono')} />
           </label>
+          {!cliente && form.tipoDespliegue === 'tenant_corpsimtelec' && (
+            <label>Contraseña del usuario administrador
+              <input
+                type="text"
+                value={form.adminPassword || ''}
+                onChange={handleChange('adminPassword')}
+                placeholder="vacío = clave por defecto (Sujam.2026!)"
+              />
+            </label>
+          )}
           <label>Dominio frontend
             <input value={form.dominioFrontend || ''} onChange={handleChange('dominioFrontend')} placeholder="cliente.corpsimtelec.com" />
           </label>

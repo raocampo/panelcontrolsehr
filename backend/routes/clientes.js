@@ -33,7 +33,9 @@ async function slugUnico(base) {
 }
 
 // Aprovisiona (o reintenta) el tenant de un cliente tenant_corpsimtelec en SUJAM.
-async function aprovisionarTenant(cliente) {
+// adminPassword es de un solo uso (no se persiste en la BD del panel) — si no se
+// pasa, SUJAM usa su propia clave por defecto (Sujam.2026!).
+async function aprovisionarTenant(cliente, { adminPassword } = {}) {
     const modo = cliente.estado === 'activo' ? 'activo' : 'trial';
     const trialDias = cliente.trialExpiraAt && cliente.trialInicioAt
         ? Math.max(1, Math.round((new Date(cliente.trialExpiraAt) - new Date(cliente.trialInicioAt)) / 864e5))
@@ -47,6 +49,7 @@ async function aprovisionarTenant(cliente) {
         tipo: cliente.tipoEmpresa || 'consorcio',
         adminEmail: cliente.contactoEmail || `admin@${cliente.slug}.local`,
         adminNombre: cliente.contactoNombre || 'Administrador',
+        adminPassword: adminPassword || undefined,
         modo,
         trialDias,
         branding: { nombre: cliente.nombreComercial },
@@ -100,6 +103,7 @@ router.post('/', async (req, res) => {
             tipoDespliegue, tipoEmpresa, ruc, slug: slugIn,
             dominioFrontend, dominioBackend, railwayProjectId, vercelProjectId,
             estado, trialInicioAt, trialExpiraAt, trialSoloLecturaHasta, notas,
+            adminPassword, // solo tenant_corpsimtelec, un solo uso — no se persiste
         } = req.body;
 
         if (!nombreComercial || !tipoDespliegue) {
@@ -135,7 +139,7 @@ router.post('/', async (req, res) => {
         let avisoAprov;
         if (tipoDespliegue === 'tenant_corpsimtelec') {
             if (sujamTenants.configurado()) {
-                cliente = await aprovisionarTenant(cliente);
+                cliente = await aprovisionarTenant(cliente, { adminPassword });
                 if (cliente.aprovisionamiento === 'error') avisoAprov = 'El cliente se creó pero falló el aprovisionamiento del tenant en SUJAM (ver notas). Reintentar con POST /:id/aprovisionar.';
             } else {
                 avisoAprov = 'SUJAM_SUPERADMIN_URL/SECRET no configurados: el tenant no se aprovisionó automáticamente.';
@@ -161,7 +165,7 @@ router.post('/:id/aprovisionar', async (req, res) => {
                 await prisma.clientes.update({ where: { id: cliente.id }, data: { slug: await slugUnico(slugify(cliente.nombreComercial)) } });
             }
             const fresco = await prisma.clientes.findUnique({ where: { id: cliente.id } });
-            const actualizado = await aprovisionarTenant(fresco);
+            const actualizado = await aprovisionarTenant(fresco, { adminPassword: req.body?.adminPassword });
             return res.json({ success: true, data: actualizado });
         }
 
@@ -188,7 +192,7 @@ router.post('/:id/aprovisionar', async (req, res) => {
         const fresco = await prisma.clientes.findUnique({ where: { id: cliente.id } });
         // Async: tarda minutos (Railway + Vercel). No bloquea la respuesta; el
         // progreso se sigue con GET /:id/aprovisionamiento.
-        provisionarMarcaBlanca(fresco, { adminNombre: req.body.adminNombre }, (msg) => console.log(`[aprovisionar#${cliente.id}]`, msg))
+        provisionarMarcaBlanca(fresco, { adminNombre: req.body.adminNombre, adminPassword: req.body.adminPassword }, (msg) => console.log(`[aprovisionar#${cliente.id}]`, msg))
             .catch(async (err) => {
                 console.error(`Aprovisionamiento marca_blanca de "${fresco.nombreComercial}" falló:`, err.message);
                 await prisma.clientes.update({
