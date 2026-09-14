@@ -139,31 +139,35 @@ export default function ClienteFormModal({ cliente, onClose, onGuardado }) {
               </label>
             </>
           )}
-          <label>Dominio frontend
-            <input value={form.dominioFrontend || ''} onChange={handleChange('dominioFrontend')} placeholder="cliente.corpsimtelec.com" />
-          </label>
-          <label>Dominio backend
-            <input value={form.dominioBackend || ''} onChange={handleChange('dominioBackend')} placeholder="api.cliente.corpsimtelec.com" />
-          </label>
-          <label>Railway project ID
-            <input value={form.railwayProjectId || ''} onChange={handleChange('railwayProjectId')} />
-          </label>
-          <label>Vercel project ID
-            <input value={form.vercelProjectId || ''} onChange={handleChange('vercelProjectId')} />
-          </label>
-          {cliente && (
-            <label>Secreto control plane (CONTROL_PLANE_SECRET en Railway)
-              <div style={{ display: 'flex', gap: 6 }}>
-                <input value={form.secretoControlPlane || ''} readOnly onClick={(e) => e.target.select()} />
-                <button
-                  type="button"
-                  className="btn-secundario"
-                  onClick={() => navigator.clipboard.writeText(form.secretoControlPlane || '')}
-                >
-                  Copiar
-                </button>
-              </div>
-            </label>
+          {form.tipoDespliegue === 'marca_blanca' && (
+            <>
+              <label>Dominio frontend
+                <input value={form.dominioFrontend || ''} onChange={handleChange('dominioFrontend')} placeholder="cliente.corpsimtelec.com" />
+              </label>
+              <label>Dominio backend
+                <input value={form.dominioBackend || ''} onChange={handleChange('dominioBackend')} placeholder="api.cliente.corpsimtelec.com" />
+              </label>
+              <label>Railway project ID
+                <input value={form.railwayProjectId || ''} onChange={handleChange('railwayProjectId')} />
+              </label>
+              <label>Vercel project ID
+                <input value={form.vercelProjectId || ''} onChange={handleChange('vercelProjectId')} />
+              </label>
+              {cliente && (
+                <label>Secreto control plane (CONTROL_PLANE_SECRET en Railway)
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <input value={form.secretoControlPlane || ''} readOnly onClick={(e) => e.target.select()} />
+                    <button
+                      type="button"
+                      className="btn-secundario"
+                      onClick={() => navigator.clipboard.writeText(form.secretoControlPlane || '')}
+                    >
+                      Copiar
+                    </button>
+                  </div>
+                </label>
+              )}
+            </>
           )}
           <label>Trial — inicio
             <input type="date" value={form.trialInicioAt || ''} onChange={handleChange('trialInicioAt')} />
