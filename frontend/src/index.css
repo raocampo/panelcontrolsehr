@@ -110,5 +110,6 @@ th { background: #f7f8fa; font-weight: 700; color: #445; }
   display: flex; flex-direction: column; gap: 12px;
 }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.form-section-title { font-weight: 700; font-size: 0.85rem; color: #1a3a5c; border-top: 1px solid #e0e4ea; padding-top: 10px; margin-top: 2px; }
 .form-grid label, .campo-ancho { display: flex; flex-direction: column; gap: 4px; font-size: 0.85rem; font-weight: 600; }
 .modal-acciones { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
