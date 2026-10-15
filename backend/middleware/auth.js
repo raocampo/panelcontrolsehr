@@ -28,4 +28,11 @@ const proteger = async (req, res, next) => {
     }
 };
 
-module.exports = { proteger };
+const permisos = {
+    gestionar_clientes: ['super_admin', 'admin', 'soporte', 'comercial'],
+    gestionar_accesos: ['super_admin', 'admin', 'soporte'],
+    gestionar_infraestructura: ['super_admin', 'admin'],
+};
+const permitir = permiso => (req, res, next) => permisos[permiso]?.includes(req.staff?.rol)
+    ? next() : res.status(403).json({ success: false, mensaje: 'Su cuenta no tiene permiso para realizar esta operación.' });
+module.exports = { proteger, permitir };

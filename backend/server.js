@@ -19,6 +19,7 @@ app.use('/api/solicitudes', require('./routes/solicitudes'));
 const { iniciarReaper } = require('./jobs/reaper');
 
 app.listen(PORT, () => {
+    require('./services/tenantOnboarding').startWorker().catch(() => console.error('[provision-worker] No se pudo iniciar la cola'));
     iniciarReaper();
     console.log('==================================================');
     console.log('🛠️  PANEL DE CONTROL SUJAM - BACKEND');

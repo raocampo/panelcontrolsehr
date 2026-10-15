@@ -113,3 +113,10 @@ th { background: #f7f8fa; font-weight: 700; color: #445; }
 .form-section-title { font-weight: 700; font-size: 0.85rem; color: #1a3a5c; border-top: 1px solid #e0e4ea; padding-top: 10px; margin-top: 2px; }
 .form-grid label, .campo-ancho { display: flex; flex-direction: column; gap: 4px; font-size: 0.85rem; font-weight: 600; }
 .modal-acciones { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+.tenant-access { border-top: 1px solid #d9e1eb; margin-top: 12px; padding-top: 12px; }
+.tenant-access button { margin: 4px 8px 4px 0; }
+.tenant-steps { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 20px; padding-left: 22px; }
+.tenant-steps li { font-size: .85rem; }
+.access-delivery { margin-top: 12px; padding: 12px; background: #f0f6ff; border: 1px solid #cadcf7; border-radius: 6px; }
+.access-delivery input { width: 100%; }
+@media (max-width: 600px) { .tenant-steps, .form-grid { grid-template-columns: 1fr; } }

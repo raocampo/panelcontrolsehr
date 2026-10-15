@@ -2,24 +2,19 @@ const express = require('express');
 const crypto = require('crypto');
 const router = express.Router();
 const prisma = require('../config/prisma');
-const { proteger } = require('../middleware/auth');
+const { proteger, permitir } = require('../middleware/auth');
 const { notificarEstado } = require('../utils/estadoCliente');
-const sujamTenants = require('../utils/sujamTenants');
 const { provisionarMarcaBlanca, actualizarVersionMarcaBlanca } = require('../utils/provisionMarcaBlanca');
+const { fechasTrial } = require('../utils/trial');
 
 router.use(proteger);
+router.use((req, res, next) => ['GET', 'HEAD', 'OPTIONS'].includes(req.method) ? next() : permitir('gestionar_clientes')(req, res, next));
+router.use(require('./tenantOnboarding'));
 
 const TIPOS_EMPRESA = ['medico', 'consorcio', 'hospital_clinica'];
 
 function slugify(v) {
-    const s = String(v || '')
-        .toLowerCase()
-        .normalize('NFD')
-        .replace(/[̀-ͯ]/g, '') // quita tildes (marcas combinantes tras NFD)
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/(^-|-$)/g, '')
-        .slice(0, 40);
-    return s || `cli-${Date.now().toString(36)}`;
+    return require('../utils/tenantSlug').sugerirSlug(v);
 }
 
 async function slugUnico(base) {
@@ -27,45 +22,10 @@ async function slugUnico(base) {
     for (let i = 2; i <= 20; i++) {
         const existe = await prisma.clientes.findUnique({ where: { slug } });
         if (!existe) return slug;
-        slug = `${base}-${i}`.slice(0, 43);
+        const suffix = `-${i}`;
+        slug = `${base.slice(0, 41 - suffix.length).replace(/-+$/, '')}${suffix}`;
     }
-    return `${base}-${Date.now().toString(36)}`;
-}
-
-// Aprovisiona (o reintenta) el tenant de un cliente tenant_corpsimtelec en SUJAM.
-// adminEmail/adminNombre/adminPassword son de un solo uso (no se persisten en la
-// BD del panel) — es el usuario real que va a poder entrar al sistema del
-// cliente, distinto del "Contacto" comercial (aunque por defecto usa esos datos
-// si no se especifica nada aparte). Sin adminPassword, SUJAM usa su clave por
-// defecto (Sujam.2026!).
-async function aprovisionarTenant(cliente, { adminEmail, adminNombre, adminPassword } = {}) {
-    const modo = cliente.estado === 'activo' ? 'activo' : 'trial';
-    const trialDias = cliente.trialExpiraAt && cliente.trialInicioAt
-        ? Math.max(1, Math.round((new Date(cliente.trialExpiraAt) - new Date(cliente.trialInicioAt)) / 864e5))
-        : 30;
-
-    const r = await sujamTenants.crearTenant({
-        slug: cliente.slug,
-        organizacion: cliente.nombreComercial,
-        razonSocial: cliente.razonSocial || undefined,
-        ruc: cliente.ruc || undefined,
-        tipo: cliente.tipoEmpresa || 'consorcio',
-        adminEmail: adminEmail || cliente.contactoEmail || `admin@${cliente.slug}.local`,
-        adminNombre: adminNombre || cliente.contactoNombre || 'Administrador',
-        adminPassword: adminPassword || undefined,
-        modo,
-        trialDias,
-        branding: { nombre: cliente.nombreComercial },
-    });
-
-    return prisma.clientes.update({
-        where: { id: cliente.id },
-        data: {
-            aprovisionamiento: r.ok ? 'aprovisionando' : 'error',
-            dominioFrontend: r.ok ? sujamTenants.dominioFrontend(cliente.slug) : cliente.dominioFrontend,
-            notas: r.ok ? cliente.notas : `${cliente.notas ? cliente.notas + '\n' : ''}[aprovisionamiento] ${r.error}`,
-        },
-    });
+    throw new Error('No se encontró un subdominio disponible');
 }
 
 // GET /api/clientes
@@ -76,7 +36,7 @@ router.get('/', async (req, res) => {
             where: estado ? { estado } : {},
             orderBy: { createdAt: 'desc' },
         });
-        res.json({ success: true, data: clientes });
+        res.json({ success: true, data: clientes.map(require('../services/tenantOnboarding').safeClient) });
     } catch (error) {
         console.error('GET /clientes:', error);
         res.status(500).json({ success: false, mensaje: 'Error al listar clientes' });
@@ -91,7 +51,7 @@ router.get('/:id', async (req, res) => {
             include: { solicitudes: true },
         });
         if (!cliente) return res.status(404).json({ success: false, mensaje: 'Cliente no encontrado' });
-        res.json({ success: true, data: cliente });
+        res.json({ success: true, data: require('../services/tenantOnboarding').safeClient(cliente) });
     } catch (error) {
         console.error('GET /clientes/:id:', error);
         res.status(500).json({ success: false, mensaje: 'Error al obtener cliente' });
@@ -106,7 +66,6 @@ router.post('/', async (req, res) => {
             tipoDespliegue, tipoEmpresa, ruc, slug: slugIn,
             dominioFrontend, dominioBackend, railwayProjectId, vercelProjectId,
             estado, trialInicioAt, trialExpiraAt, trialSoloLecturaHasta, notas,
-            adminNombre, adminEmail, adminPassword, // solo tenant_corpsimtelec, un solo uso — no se persisten
         } = req.body;
 
         if (!nombreComercial || !tipoDespliegue) {
@@ -115,13 +74,19 @@ router.post('/', async (req, res) => {
         if (tipoEmpresa && !TIPOS_EMPRESA.includes(tipoEmpresa)) {
             return res.status(400).json({ success: false, mensaje: `tipoEmpresa inválido (${TIPOS_EMPRESA.join(', ')})` });
         }
-
-        let slug = null;
-        if (tipoDespliegue === 'tenant_corpsimtelec') {
-            slug = await slugUnico(slugify(slugIn || nombreComercial));
+        if (!['marca_blanca', 'tenant_corpsimtelec'].includes(tipoDespliegue)) {
+            return res.status(400).json({ success: false, mensaje: 'Tipo de despliegue inválido' });
         }
+        if (estado && !['trial', 'activo', 'bloqueado', 'cancelado'].includes(estado)) {
+            return res.status(400).json({ success: false, mensaje: 'Estado inválido' });
+        }
+        let periodo;
+        try {
+            periodo = (estado || 'trial') === 'trial' ? fechasTrial({ trialInicioAt, trialExpiraAt, trialSoloLecturaHasta }) : {};
+        } catch (err) { return res.status(400).json({ success: false, mensaje: err.message }); }
 
-        let cliente = await prisma.clientes.create({
+        const slug = null;
+        const cliente = await prisma.clientes.create({
             data: {
                 nombreComercial, razonSocial, contactoNombre, contactoEmail, contactoTelefono,
                 tipoDespliegue,
@@ -131,25 +96,13 @@ router.post('/', async (req, res) => {
                 dominioFrontend, dominioBackend, railwayProjectId, vercelProjectId,
                 estado: estado || 'trial',
                 aprovisionamiento: 'pendiente',
-                trialInicioAt: trialInicioAt ? new Date(trialInicioAt) : null,
-                trialExpiraAt: trialExpiraAt ? new Date(trialExpiraAt) : null,
-                trialSoloLecturaHasta: trialSoloLecturaHasta ? new Date(trialSoloLecturaHasta) : null,
+                ...periodo,
                 notas,
                 secretoControlPlane: crypto.randomBytes(32).toString('hex'),
             },
         });
 
-        let avisoAprov;
-        if (tipoDespliegue === 'tenant_corpsimtelec') {
-            if (sujamTenants.configurado()) {
-                cliente = await aprovisionarTenant(cliente, { adminNombre, adminEmail, adminPassword });
-                if (cliente.aprovisionamiento === 'error') avisoAprov = 'El cliente se creó pero falló el aprovisionamiento del tenant en SUJAM (ver notas). Reintentar con POST /:id/aprovisionar.';
-            } else {
-                avisoAprov = 'SUJAM_SUPERADMIN_URL/SECRET no configurados: el tenant no se aprovisionó automáticamente.';
-            }
-        }
-
-        res.status(201).json({ success: true, data: cliente, avisoAprov });
+        res.status(201).json({ success: true, data: require('../services/tenantOnboarding').safeClient(cliente) });
     } catch (error) {
         console.error('POST /clientes:', error);
         if (error.code === 'P2002') return res.status(409).json({ success: false, mensaje: 'Ya existe un cliente con ese slug' });
@@ -163,20 +116,8 @@ router.post('/:id/aprovisionar', async (req, res) => {
         const cliente = await prisma.clientes.findUnique({ where: { id: parseInt(req.params.id, 10) } });
         if (!cliente) return res.status(404).json({ success: false, mensaje: 'Cliente no encontrado' });
 
-        if (cliente.tipoDespliegue === 'tenant_corpsimtelec') {
-            if (!cliente.slug) {
-                await prisma.clientes.update({ where: { id: cliente.id }, data: { slug: await slugUnico(slugify(cliente.nombreComercial)) } });
-            }
-            const fresco = await prisma.clientes.findUnique({ where: { id: cliente.id } });
-            const actualizado = await aprovisionarTenant(fresco, {
-                adminNombre: req.body?.adminNombre,
-                adminEmail: req.body?.adminEmail,
-                adminPassword: req.body?.adminPassword,
-            });
-            return res.json({ success: true, data: actualizado });
-        }
-
         // marca_blanca: crea infraestructura REAL y facturable en Railway/Vercel.
+        if (!['super_admin', 'admin'].includes(req.staff.rol)) return res.status(403).json({ success: false, mensaje: 'Se requiere permiso de infraestructura' });
         // Requiere confirmación explícita — nunca se dispara solo.
         if (!req.body?.confirmar) {
             return res.status(400).json({
@@ -260,32 +201,29 @@ router.post('/:id/actualizar-version', async (req, res) => {
     }
 });
 
-// GET /api/clientes/:id/aprovisionamiento — consulta el estado real del tenant en SUJAM
+// Dedicated deployments retain their existing provisioning status.
 router.get('/:id/aprovisionamiento', async (req, res) => {
     try {
-        const cliente = await prisma.clientes.findUnique({ where: { id: parseInt(req.params.id, 10) } });
-        if (!cliente) return res.status(404).json({ success: false, mensaje: 'Cliente no encontrado' });
-        if (cliente.tipoDespliegue !== 'tenant_corpsimtelec' || !cliente.slug) {
-            return res.json({ success: true, data: { aprovisionamiento: cliente.aprovisionamiento, remoto: null } });
-        }
-        const r = await sujamTenants.obtenerTenant(cliente.slug);
-        let aprov = cliente.aprovisionamiento;
-        if (r.ok && (r.data.estado === 'activo' || r.data.estado === 'solo_lectura')) aprov = 'listo';
-        else if (r.ok && r.data.estado === 'error') aprov = 'error';
-        if (aprov !== cliente.aprovisionamiento) {
-            await prisma.clientes.update({ where: { id: cliente.id }, data: { aprovisionamiento: aprov } });
-        }
-        res.json({ success: true, data: { aprovisionamiento: aprov, remoto: r.ok ? r.data : { error: r.error } } });
-    } catch (error) {
-        console.error('GET /clientes/:id/aprovisionamiento:', error);
-        res.status(500).json({ success: false, mensaje: 'Error al consultar aprovisionamiento' });
-    }
+        const c = await prisma.clientes.findUnique({ where: { id: Number(req.params.id) } });
+        if (!c) return res.status(404).json({ success: false, mensaje: 'Cliente no encontrado' });
+        res.json({ success: true, data: { aprovisionamiento: c.aprovisionamiento } });
+    } catch { res.status(500).json({ success: false, mensaje: 'No se pudo consultar el estado' }); }
 });
 
 // PUT /api/clientes/:id
 router.put('/:id', async (req, res) => {
     try {
         const b = req.body;
+        const actual = await prisma.clientes.findUnique({ where: { id: Number(req.params.id) } });
+        if (!actual) return res.status(404).json({ success: false, mensaje: 'Cliente no encontrado' });
+        if (actual.tipoDespliegue === 'tenant_corpsimtelec') {
+            for (const field of ['tipoDespliegue', 'tipoEmpresa', 'slug', 'dominioFrontend', 'dominioBackend', 'vercelProjectId', 'railwayProjectId']) {
+                if (b[field] !== undefined && b[field] !== actual[field]) return res.status(400).json({ success: false, mensaje: 'La infraestructura y el tipo del tenant se gestionan mediante su aprovisionamiento.' });
+            }
+            if (['trialInicioAt', 'trialExpiraAt', 'trialSoloLecturaHasta'].some(k => b[k] !== undefined)) return res.status(400).json({ success: false, mensaje: 'Las fechas del tenant se sincronizan con SUJAM y no se editan manualmente.' });
+            if (b.estado === 'trial' && actual.estado !== 'trial') return res.status(400).json({ success: false, mensaje: 'Reabrir una prueba requiere una operación explícita de soporte.' });
+            if (b.estado === 'activo' && actual.estado !== 'activo' && !actual.disponibleDesde) return res.status(409).json({ success: false, mensaje: 'Complete la preparación del acceso antes de activar el cliente.' });
+        }
         const dataToUpdate = {};
         for (const k of ['nombreComercial', 'razonSocial', 'contactoNombre', 'contactoEmail', 'contactoTelefono',
             'tipoDespliegue', 'tipoEmpresa', 'ruc', 'dominioFrontend', 'dominioBackend',
@@ -296,15 +234,19 @@ router.put('/:id', async (req, res) => {
             if (b[k] !== undefined) dataToUpdate[k] = b[k] ? new Date(b[k]) : null;
         }
 
+        if (actual.tipoDespliegue === 'tenant_corpsimtelec' && b.estado && b.estado !== actual.estado) {
+            const applied = await notificarEstado({ ...actual, estado: b.estado });
+            if (!applied.ok) return res.status(503).json({ success: false, mensaje: 'SUJAM no confirmó el cambio de estado. La ficha conserva su estado anterior.' });
+        }
         const cliente = await prisma.clientes.update({
             where: { id: parseInt(req.params.id, 10) },
             data: dataToUpdate,
         });
 
-        const bridge = await notificarEstado(cliente);
+        const bridge = cliente.tipoDespliegue === 'tenant_corpsimtelec' ? { ok: true } : await notificarEstado(cliente);
         res.json({
             success: true,
-            data: cliente,
+            data: require('../services/tenantOnboarding').safeClient(cliente),
             avisoBridge: bridge.ok ? undefined : `Cliente actualizado, pero no se pudo notificar a su despliegue: ${bridge.error}`,
         });
     } catch (error) {
@@ -317,15 +259,23 @@ router.put('/:id', async (req, res) => {
 // PUT /api/clientes/:id/dar-de-alta — el cliente pagó: trial -> activo
 router.put('/:id/dar-de-alta', async (req, res) => {
     try {
+        const actual = await prisma.clientes.findUnique({ where: { id: Number(req.params.id) } });
+        if (!actual) return res.status(404).json({ success: false, mensaje: 'Cliente no encontrado' });
+        if (actual.tipoDespliegue === 'tenant_corpsimtelec') {
+            if (!actual.disponibleDesde) return res.status(409).json({ success: false, mensaje: 'Verifique primero el acceso completo del cliente.' });
+            const applied = await notificarEstado({ ...actual, estado: 'activo' });
+            if (!applied.ok) return res.status(503).json({ success: false, mensaje: 'SUJAM no confirmó la activación. Intente nuevamente.' });
+        }
         const cliente = await prisma.clientes.update({
             where: { id: parseInt(req.params.id, 10) },
-            data: { estado: 'activo', fechaActivacion: new Date() },
+            data: { estado: 'activo', fechaActivacion: new Date(), ...(actual.tipoDespliegue === 'tenant_corpsimtelec'
+                ? { trialInicioAt: null, trialExpiraAt: null, trialSoloLecturaHasta: null } : {}) },
         });
 
-        const bridge = await notificarEstado(cliente);
+        const bridge = cliente.tipoDespliegue === 'tenant_corpsimtelec' ? { ok: true } : await notificarEstado(cliente);
         res.json({
             success: true,
-            data: cliente,
+            data: require('../services/tenantOnboarding').safeClient(cliente),
             avisoBridge: bridge.ok ? undefined : `Cliente actualizado, pero no se pudo notificar a su despliegue: ${bridge.error}`,
         });
     } catch (error) {

@@ -1,12 +1,26 @@
 # Panel de Control — CorpSimtelec
 
+**Guía vigente:** [alta automática de tenants y entrega del acceso](../sistemaSUJAM/docs/Documentación/01-instalacion-operacion/ALTA_AUTOMATICA_TENANTS.md). Incluye administrador obligatorio, trabajos persistentes, Vercel, DNS/HTTPS y recuperación de credenciales. `Listo para ingresar` requiere comprobación completa de disponibilidad.
+
+**Diseño implementado:** [alta completa de tenants desde el panel](../sistemaSUJAM/docs/Documentación/05-propuestas-tecnicas/PLAN_ALTA_COMPLETA_TENANTS_PANEL.md). Publicado y habilitado en Railway/Vercel el 2026-10-15. Claudio, Clínica Abendaño y Calypso conciliados mediante el nuevo worker, con todas las etapas comprobadas y sin reiniciar sus trials ni cambiar sus claves. Falta confirmar el wildcard DonWeb para evitar cargar CNAME por cliente nuevo.
+
+## Revisión inicial de trials — 2026-10-15 (histórico anterior a la publicación integral)
+
+Clínica Abendaño se creó en el panel real como cliente #2, `tenant_corpsimtelec`, `hospital_clinica`/V3, estado `trial`, aprovisionamiento `listo`. DNS propagado, certificado HTTPS emitido y página/JavaScript/login verificados. Detalle en `../sistemaSUJAM/docs/Documentación/03-cliente-comercial/TRIAL_CLINICA_ABENDANO.md`.
+
+Cambios locales probados: despliegue compartido por defecto en el formulario; fechas automáticas de 30+10 días; validación del correo administrador; clave temporal aleatoria y copia del acceso; avisos de aprovisionamiento visibles; enlaces sin duplicar `https://`; reintentos que reconocen tenants ya listos; sincronización de fechas y activación comercial sin vencimiento residual. Requieren desplegar este repo y SUJAM. No se hizo push.
+
+El puente de producción sigue usando la URL Railway, que funciona. No cambiar a `tenants.sujam.corpsimtelec.com` hasta resolver su certificado TLS.
+
+También se habilitó `claudioabendano.sujam.corpsimtelec.com`: el tenant médico ya existía y tenía DNS, pero faltaba asociar el hostname a `sujam-frontend`. Dominio agregado, certificado emitido y página/JavaScript HTTPS 200. Pendiente automatizar desde el panel la asociación del dominio y mostrar estado DNS/HTTPS por separado de la preparación de la BD.
+
 Control plane mínimo ("super-admin") para gestionar los clientes/despliegues
 de SUJAM (Fase 2 del plan de marca blanca — ver
 `sistemaSUJAM/docs/qa/cierre_jornada_2026-08-05.md`, Rondas 5-6, y
 `sistemaSUJAM/docs/qa/cierre_jornada_2026-08-06.md`).
 
-Cada cliente de SUJAM tiene su propio despliegue aislado (BD + backend +
-frontend en Railway/Vercel). Esta app **no** contiene datos clínicos ni se
+Cada tenant tiene su propia BD y comparte backend/frontend; los clientes de
+marca blanca tienen infraestructura dedicada en Railway/Vercel. Esta app **no** contiene datos clínicos ni se
 conecta a la BD de ningún cliente — es solo un registro administrativo
 (quién es el cliente, su tipo de despliegue, su estado de trial/pago) para
 el equipo interno de CorpSimtelec.

@@ -46,20 +46,21 @@ export default function Dashboard({ staff, onLogout }) {
   const [cargando, setCargando] = useState(true);
   const [modalAbierto, setModalAbierto] = useState(false);
   const [clienteEditando, setClienteEditando] = useState(null);
+  const [resultadoAlta, setResultadoAlta] = useState(null);
+  const [errorGeneral, setErrorGeneral] = useState('');
 
   const cargarClientes = async () => {
     const res = await api.get('/clientes');
     setClientes(res.data.data || []);
   };
 
-  const cargarSolicitudes = async () => {
-    const res = await api.get('/solicitudes');
-    setSolicitudes(res.data.data || []);
-  };
-
   useEffect(() => {
-    setCargando(true);
-    Promise.all([cargarClientes(), cargarSolicitudes()]).finally(() => setCargando(false));
+    let active = true;
+    Promise.all([api.get('/clientes'), api.get('/solicitudes')]).then(([c, s]) => {
+      if (active) { setClientes(c.data.data || []); setSolicitudes(s.data.data || []); }
+    }).catch(() => { if (active) setErrorGeneral('No se pudo cargar el panel. Actualice la página para reintentar.'); })
+      .finally(() => { if (active) setCargando(false); });
+    return () => { active = false; };
   }, []);
 
   // Mientras haya algún cliente "aprovisionando", refresca su estado real cada
@@ -70,14 +71,14 @@ export default function Dashboard({ staff, onLogout }) {
   useEffect(() => { clientesRef.current = clientes; }, [clientes]);
   useEffect(() => {
     const id = setInterval(async () => {
-      const enCurso = clientesRef.current.filter((c) => c.aprovisionamiento === 'aprovisionando');
+      const enCurso = clientesRef.current.filter((c) => c.tipoDespliegue === 'tenant_corpsimtelec' || c.aprovisionamiento === 'aprovisionando');
       if (enCurso.length === 0) return;
       await Promise.all(
         enCurso
           .filter((c) => c.tipoDespliegue === 'tenant_corpsimtelec')
           .map((c) => api.get(`/clientes/${c.id}/aprovisionamiento`).catch(() => {})),
       );
-      cargarClientes();
+      cargarClientes().catch(() => {});
     }, 6000);
     return () => clearInterval(id);
   }, []);
@@ -132,8 +133,9 @@ export default function Dashboard({ staff, onLogout }) {
     setModalAbierto(true);
   };
 
-  const handleGuardadoCliente = () => {
+  const handleGuardadoCliente = (resultado) => {
     setModalAbierto(false);
+    setResultadoAlta(resultado);
     cargarClientes();
   };
 
@@ -156,6 +158,19 @@ export default function Dashboard({ staff, onLogout }) {
           Solicitudes ({solicitudes.length})
         </button>
       </nav>
+      {errorGeneral && <p className="mensaje-error" role="alert">{errorGeneral}</p>}
+
+      {resultadoAlta && <div className="pad" role="status">
+        <strong>{resultadoAlta.cliente?.nombreComercial}: guardado.</strong>
+        {resultadoAlta.aviso && <p>{resultadoAlta.aviso}</p>}
+        {resultadoAlta.acceso && <>
+          <p>Acceso inicial: <strong>{resultadoAlta.acceso.email}</strong>. Guarde la clave antes de cerrar este aviso; se muestra una sola vez.</p>
+          <p>La cuenta se habilita al completar la preparación. Después deberá cambiar la clave temporal en su primer ingreso.</p>
+          <label>Contraseña temporal <input readOnly value={resultadoAlta.acceso.password} autoComplete="off" /></label>
+          <button onClick={() => navigator.clipboard.writeText(`Sistema: ${resultadoAlta.cliente?.dominioFrontend}\nUsuario: ${resultadoAlta.acceso.email}\nContraseña temporal: ${resultadoAlta.acceso.password}`).catch(() => window.alert('Seleccione y copie los datos visibles.'))}>Copiar acceso temporal</button>
+        </>}
+        <button className="btn-secundario" onClick={() => setResultadoAlta(null)}>Cerrar aviso</button>
+      </div>}
 
       {cargando ? (
         <p className="pad">Cargando...</p>
@@ -188,12 +203,14 @@ export default function Dashboard({ staff, onLogout }) {
                     <td>{TIPO_EMPRESA_LABELS[c.tipoEmpresa] || c.tipoEmpresa}</td>
                     <td>
                       {c.dominioFrontend
-                        ? <a href={`https://${c.dominioFrontend}`} target="_blank" rel="noreferrer">{c.dominioFrontend}</a>
+                        ? <a href={c.dominioFrontend.startsWith('http') ? c.dominioFrontend : `https://${c.dominioFrontend}`} target="_blank" rel="noreferrer">{c.dominioFrontend}</a>
                         : '—'}
                     </td>
                     <td>
                       <span className={`badge badge-${c.aprovisionamiento}`}>
-                        {APROVISIONAMIENTO_LABELS[c.aprovisionamiento] || c.aprovisionamiento}
+                        {c.tipoDespliegue === 'tenant_corpsimtelec' && c.aprovisionamiento === 'listo'
+                          ? c.accesoEstado === 'listo' ? 'Listo para ingresar' : 'Verificar acceso'
+                          : APROVISIONAMIENTO_LABELS[c.aprovisionamiento] || c.aprovisionamiento}
                       </span>
                       {c.tipoDespliegue === 'marca_blanca' && c.aprovisionamiento === 'listo' && (
                         <div className="texto-chico">v: {c.versionRef}</div>
@@ -203,7 +220,7 @@ export default function Dashboard({ staff, onLogout }) {
                     <td>{trial ? <span className={trial.vencido ? 'texto-alerta' : ''}>{trial.texto}</span> : '—'}</td>
                     <td>{c.contactoEmail || '—'}</td>
                     <td className="acciones">
-                      <button className="btn-link" onClick={() => handleEditarCliente(c)}>Editar</button>
+                      <button className="btn-link" onClick={() => handleEditarCliente(c)}>{c.tipoDespliegue === 'tenant_corpsimtelec' ? 'Editar y acceso' : 'Editar'}</button>
                       {c.estado === 'trial' && (
                         <button className="btn-link" onClick={() => handleDarDeAlta(c)}>Dar de alta</button>
                       )}
@@ -262,6 +279,7 @@ export default function Dashboard({ staff, onLogout }) {
           cliente={clienteEditando}
           onClose={() => setModalAbierto(false)}
           onGuardado={handleGuardadoCliente}
+          canReset={['super_admin', 'admin', 'soporte'].includes(staff.rol)}
         />
       )}
     </div>

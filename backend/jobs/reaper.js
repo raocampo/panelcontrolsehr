@@ -34,8 +34,9 @@ async function correrUnaVez() {
             if (!c.slug) continue;
             const r = await sujamTenants.obtenerTenant(c.slug);
             if (r.ok && (r.data.estado === 'activo' || r.data.estado === 'solo_lectura')) {
-                await prisma.clientes.update({ where: { id: c.id }, data: { aprovisionamiento: 'listo' } });
-                console.log(`[reaper] tenant "${c.slug}" confirmado listo`);
+                // The durable onboarding worker verifies domain, TLS and account.
+                // A prepared database alone must never set the client to listo.
+                continue;
             } else if (r.ok && r.data.estado === 'error') {
                 await prisma.clientes.update({ where: { id: c.id }, data: { aprovisionamiento: 'error' } });
             }

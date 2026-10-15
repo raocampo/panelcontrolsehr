@@ -50,8 +50,50 @@ model clientes {
   createdAt             DateTime      @default(now())
   updatedAt             DateTime      @updatedAt
   solicitudes           solicitudes[]
+  adminUsuarioId        Int?
+  adminEmail            String?       @db.VarChar(150)
+  adminNombre           String?       @db.VarChar(200)
+  accesoEstado          String        @default("pendiente") @db.VarChar(40)
+  disponibleDesde       DateTime?
+  ultimaVerificacionAt  DateTime?
+  eventos               eventos_clientes[]
 
   @@index([estado])
+}
+
+model provision_jobs {
+  id            String   @id
+  resource      String   @unique
+  request_key   String?  @unique
+  request_hash  String
+  payload       Json
+  state         String   @default("pending")
+  stage         String   @default("pendiente")
+  steps         Json     @default("{}")
+  result        Json?
+  attempts      Int      @default(0)
+  next_run_at   DateTime @default(now()) @db.Timestamptz
+  owner         String?
+  lease_until   DateTime? @db.Timestamptz
+  error_code    String?
+  error_message String?
+  created_at    DateTime @default(now()) @db.Timestamptz
+  updated_at    DateTime @default(now()) @db.Timestamptz
+
+  @@index([state, next_run_at], map: "provision_jobs_due")
+}
+
+model eventos_clientes {
+  id            String   @id @default(uuid())
+  clienteId     Int
+  cliente       clientes @relation(fields: [clienteId], references: [id])
+  staffId       Int?
+  accion        String
+  resultado     String
+  correlacion   String?
+  createdAt     DateTime @default(now())
+
+  @@index([clienteId, createdAt])
 }
 
 // Listas para que la Fase 3 (formulario público) las alimente más adelante.

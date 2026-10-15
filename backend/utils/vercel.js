@@ -26,7 +26,10 @@ async function llamar(metodo, path, body) {
         signal: AbortSignal.timeout(30000),
     });
     const json = await resp.json().catch(() => ({}));
-    if (!resp.ok) throw new Error(`Vercel API: ${resp.status} ${JSON.stringify(json)}`);
+    if (!resp.ok) throw Object.assign(new Error(`Vercel API: HTTP ${resp.status}`), {
+        status: resp.status, providerCode: json.error?.code,
+        retryAfter: resp.headers.get('retry-after'),
+    });
     return json;
 }
 
@@ -102,4 +105,4 @@ async function esperarDeployment(deploymentId, { timeoutMs = 5 * 60 * 1000, inte
     throw new Error(`Timeout esperando el deployment ${deploymentId} de Vercel`);
 }
 
-module.exports = { crearProyecto, crearDeployment, agregarVariable, desactivarProteccionSSO, dominioDefault, obtenerDeployment, esperarDeployment };
+module.exports = { llamar, crearProyecto, crearDeployment, agregarVariable, desactivarProteccionSSO, dominioDefault, obtenerDeployment, esperarDeployment };

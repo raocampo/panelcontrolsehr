@@ -45,8 +45,8 @@ function obtenerTenant(slug) {
     return llamar('GET', `/tenants/${encodeURIComponent(slug)}`);
 }
 
-function setEstadoTenant(slug, estado) {
-    return llamar('PATCH', `/tenants/${encodeURIComponent(slug)}/estado`, { estado });
+function setEstadoTenant(slug, estado, modo) {
+    return llamar('PATCH', `/tenants/${encodeURIComponent(slug)}/estado`, { estado, modo });
 }
 
 function actualizarTenant(slug, campos) {
@@ -58,3 +58,9 @@ function dominioFrontend(slug) {
 }
 
 module.exports = { configurado, crearTenant, obtenerTenant, setEstadoTenant, actualizarTenant, dominioFrontend };
+module.exports.obtenerOperacion = id => llamar('GET', `/operaciones/${encodeURIComponent(id)}`);
+module.exports.reanudarOperacion = id => llamar('POST', `/operaciones/${encodeURIComponent(id)}/reanudar`, {});
+module.exports.preparacion = slug => llamar('GET', `/tenants/${encodeURIComponent(slug)}/preparacion`);
+module.exports.administrador = slug => llamar('GET', `/tenants/${encodeURIComponent(slug)}/administrador`);
+module.exports.confirmarDisponibilidad = slug => llamar('POST', `/tenants/${encodeURIComponent(slug)}/confirmar-disponibilidad`, {});
+module.exports.restablecerAdministrador = (slug, body) => llamar('POST', `/tenants/${encodeURIComponent(slug)}/administrador/restablecer`, body);

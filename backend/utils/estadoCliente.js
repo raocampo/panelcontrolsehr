@@ -18,7 +18,7 @@ function mapEstadoTenant(estado) {
 async function notificarEstado(cliente) {
     if (cliente.tipoDespliegue === 'tenant_corpsimtelec') {
         if (!cliente.slug) return { ok: true, omitido: true, motivo: 'sin slug (aún no aprovisionado)' };
-        const r = await sujamTenants.setEstadoTenant(cliente.slug, mapEstadoTenant(cliente.estado));
+        const r = await sujamTenants.setEstadoTenant(cliente.slug, mapEstadoTenant(cliente.estado), cliente.estado === 'activo' ? 'activo' : undefined);
         return r.ok ? { ok: true } : { ok: false, error: r.error };
     }
     // marca_blanca
